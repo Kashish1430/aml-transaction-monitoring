@@ -29,3 +29,6 @@ plotly==5.22.0
 # Dev / CI
 pytest==8.2.1
 ruff==0.4.7
+
+# Data acquisition (local only, not needed by the deployed app)
+kaggle==2.2.3

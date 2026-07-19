@@ -39,7 +39,15 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 
 ## Dataset
 
-IBM Transactions for Anti-Money Laundering (AML), Kaggle publisher `ealtman2019`, dataset `ibm-transactions-for-anti-money-laundering-aml`. Use **HI-Small** only (do not silently switch to a larger split — it changes runtime and memory assumptions throughout the plan). Fully synthetic, ~2% illicit, labelled with 8 laundering typologies (fan-in, fan-out, bipartite, stack, random, cycle, scatter-gather, gather-scatter). Confirm exact column names on load rather than assuming them.
+IBM Transactions for Anti-Money Laundering (AML), Kaggle publisher `ealtman2019`, dataset `ibm-transactions-for-anti-money-laundering-aml`. Use **HI-Small** only (do not silently switch to a larger split — it changes runtime and memory assumptions throughout the plan). Fully synthetic, labelled with 8 laundering typologies (fan-in, fan-out, bipartite, stack, random, cycle, scatter-gather, gather-scatter).
+
+Confirmed against the actual files (`notebooks/01_eda.ipynb`), not assumed:
+- **5,078,345 transactions**, prevalence **~0.10%** (5,177 positives) — far more extreme than the brief's "~2%" estimate. Treat this as the real number everywhere; it makes the false-positive-reduction framing stronger, not weaker.
+- **Date span is only ~17-18 days** (2022-09-01 to 2022-09-18). The `windows.rolling_days: [1, 7, 30]` in `config.yaml` still works, but the 30-day window effectively means "all history to date" for most transactions given the short span — not a bug, just know this when interpreting that feature.
+- `HI-Small_Trans.csv` columns: `Timestamp, From Bank, Account, To Bank, Account, Amount Received, Receiving Currency, Amount Paid, Payment Currency, Payment Format, Is Laundering`. Note the duplicate `Account` header (sender/receiver) — pandas auto-renames the second one to `Account.1`; `src/data_loader.py` handles this.
+- `HI-Small_accounts.csv` columns: `Bank Name, Bank ID, Account Number, Entity ID, Entity Name` — entity ownership mapping only, no KYC/device/login fields (those belong to the separate mule-ring project, see [Future work] in `PLAN.md`, not this one).
+- `HI-Small_Patterns.txt` is **not a CSV** — it's blocks of `BEGIN LAUNDERING ATTEMPT - <TYPOLOGY>: <note>` / raw transaction rows / `END LAUNDERING ATTEMPT`. There is no transaction-ID column anywhere in this dataset, so `src/data_loader.load_patterns` labels 3,209 of the 5,177 laundering transactions (62%) by matching on shared field values; the remaining 38% are laundering but don't match a named typology block — expected, not a parsing bug.
+- Data lives locally at `data/raw/` (gitignored) via the Kaggle API (`kaggle datasets download -d ealtman2019/ibm-transactions-for-anti-money-laundering-aml -f <filename> -p data/raw`), authenticated via a token file at `~/.kaggle/access_token` (Kaggle's newer single-token flow, not the older `kaggle.json` username+key format).
 
 ## Deployment model (important — do not load raw data into the live app)
 
@@ -47,4 +55,4 @@ The deployed Streamlit app never runs feature engineering, model inference, or S
 
 ## Current status
 
-Project scaffolding not yet started (as of plan creation). Next step is Phase 0 in `PLAN.md`.
+Phase 0 (scaffolding) and Phase 1 (data loading, validation, EDA) are done: `src/data_loader.py` is implemented and tested, HI-Small is downloaded locally, `notebooks/01_eda.ipynb` runs end to end and figures are saved in `reports/figures/`. Next step is Phase 2 (`src/rules_baseline.py`) in `PLAN.md`.
