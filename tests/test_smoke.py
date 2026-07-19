@@ -1,4 +1,7 @@
-"""Placeholder so CI has a passing suite before Phase 1+ tests exist. Remove once real tests land."""
+"""Placeholder so CI has a passing suite before Phase 1+ tests exist.
+
+Remove once real tests land.
+"""
 
 import yaml
 
