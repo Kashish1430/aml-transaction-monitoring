@@ -1,0 +1,32 @@
+# Environments
+venve/
+.venv/
+env/
+__pycache__/
+*.pyc
+.pip-cache/
+.tmp/
+
+# Data (regenerable / large / gitignored per PLAN.md)
+data/raw/
+data/processed/
+
+# Models (regenerable; only app/data/demo_alerts.parquet ships)
+models/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+*.egg-info/

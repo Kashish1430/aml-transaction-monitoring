@@ -1,0 +1,44 @@
+# Central config for the AML alert-triage pipeline.
+# Every script/notebook reads paths, seeds, and thresholds from here — no magic numbers in src/.
+
+seed: 42
+
+paths:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  models_dir: "models"
+  figures_dir: "reports/figures"
+  results_md: "reports/results.md"
+  demo_artifact: "app/data/demo_alerts.parquet"
+  demo_metrics: "app/data/demo_metrics.json"
+
+dataset:
+  kaggle_handle: "ealtman2019/ibm-transactions-for-anti-money-laundering-aml"
+  split: "HI-Small"          # do not switch splits without updating PLAN.md's sizing assumptions
+  label_column: "Is Laundering"
+
+windows:
+  rolling_days: [1, 7, 30]
+
+rules_baseline:
+  large_amount_threshold: 10000      # placeholder — recalibrate against real amount distribution in Phase 1 EDA
+  structuring_window_hours: 24
+  structuring_min_txn_count: 3
+  structuring_threshold_fraction: 0.9  # "just under" = within this fraction of large_amount_threshold
+  pass_through_window_hours: 2
+
+split:
+  method: "time_ordered"             # never random k-fold — see CLAUDE.md leakage constraint
+  train_frac: 0.6
+  val_frac: 0.2
+  test_frac: 0.2
+
+model:
+  primary: "xgboost"                 # xgboost | lightgbm
+  imbalance_handling: "scale_pos_weight"  # prefer over naive oversampling per brief
+
+evaluation:
+  precision_at_k: [100, 500, 1000, 5000]
+
+demo_artifact:
+  target_rows: 30000                 # all positives + stratified negative sample, target <20MB parquet
