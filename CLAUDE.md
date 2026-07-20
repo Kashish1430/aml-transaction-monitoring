@@ -55,4 +55,6 @@ The deployed Streamlit app never runs feature engineering, model inference, or S
 
 ## Current status
 
-Phase 0 (scaffolding) and Phase 1 (data loading, validation, EDA) are done: `src/data_loader.py` is implemented and tested, HI-Small is downloaded locally, `notebooks/01_eda.ipynb` runs end to end and figures are saved in `reports/figures/`. Next step is Phase 2 (`src/rules_baseline.py`) in `PLAN.md`.
+Phases 0-2 are done. Phase 2 added `src/rules_baseline.py` (large-amount/structuring/pass-through rules, USD-normalized via `fx_rates_to_usd` in `config.yaml`) with results logged in `reports/results.md`: 36.3% alert rate, 0.17% precision, 60.6% recall — the number every later model must beat. Next step is Phase 3 (`src/features.py`, `src/graph_features.py`) in `PLAN.md`.
+
+Workflow note: `main` now has branch protection (PR + passing CI required, no direct pushes, even for admins). All work happens on feature branches, e.g. `phase-2-rules-baseline`, merged via PR once CI is green.
