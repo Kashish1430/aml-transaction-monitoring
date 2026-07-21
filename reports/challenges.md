@@ -6,7 +6,69 @@ this project in interviews. Unlike `results.md` (headline metrics) this is a nar
 log, not a regenerable artifact; it's updated by hand as real problems get solved.
 
 Format per entry: **what broke**, **root cause** (not just the symptom), **the fix**,
-**why it's a good interview story**.
+**why it's a good interview story**. A few entries are design/architecture questions
+rather than bugs — those use **the question** / **the answer** / **why it matters**
+instead, since nothing "broke."
+
+---
+
+## Architecture — why this is a batch pipeline, not a real-time scoring service
+
+- **The question:** After Phase 3's batch feature pipeline (`data/processed/features.parquet`,
+  built once from the full historical dataset), the natural follow-up is: what happens
+  when a *new* transaction arrives? Surely a real bank doesn't rebuild the whole account
+  graph and rescan years of history for every incoming wire — that would be an absurd
+  amount of computation per transaction. So how does this actually work in production,
+  and is "batch" just a simplification for a portfolio project, or is it how real AML
+  transaction monitoring is actually architected?
+- **The answer:** Real banks run two structurally different kinds of controls, and it's
+  easy to conflate them:
+  1. **Real-time, blocking — sanctions/watchlist screening.** Before a wire completes,
+     the counterparty is checked against OFAC/sanctions lists. This has to be real-time
+     and has to be able to block the transaction, because letting funds reach a
+     sanctioned entity even briefly is its own severe violation. It's a lookup problem
+     (is this name/account on a list?) with no historical context required, which is
+     exactly why real-time is both necessary and cheap here.
+  2. **Batch/periodic, non-blocking — AML typology detection.** This is what this
+     project models (structuring, layering, fan-in/fan-out, cycles). These typologies
+     are only visible as *patterns across multiple transactions over time* — a single
+     transaction essentially never looks suspicious in isolation. Detecting them
+     requires a rolling window of history, which is why real transaction monitoring
+     systems commonly re-score on a nightly/end-of-day batch cadence rather than a
+     stateless per-transaction API call — the pattern-based nature of the problem
+     forces the batch shape, not just convenience.
+
+  This lines up with the regulatory timeline, which is itself batch-tolerant, not
+  real-time: an alert leads to analyst investigation, and if there are grounds to
+  suspect laundering, the institution files a **SAR (Suspicious Activity Report)** with
+  the regulator (FinCEN in the US) — typically required within 30 days of detection,
+  extendable to 60. Separately, any transaction over $10,000 gets a **CTR (Currency
+  Transaction Report)** filed regardless of suspicion, a routine threshold-based filing
+  (this is what `rules_baseline.py`'s large-amount rule models) — a SAR and a CTR are
+  two different regulatory instruments, not the same thing under different names.
+
+  None of this means a new transaction is literally unscored until the next nightly
+  batch, though — production systems handle it with *incremental* state, not by
+  re-running this project's batch pipeline per transaction:
+  - Rolling counts/sums: a small per-account rolling log (feature store / cache),
+    updated in O(1) per new transaction — not the `merge_asof`-based batch approach
+    built here for scoring millions of historical rows at once.
+  - Graph degree/fan-in/fan-out: the account graph already exists in memory or a graph
+    DB; a new edge just increments a couple of counters, with the same FIFO-pruning
+    idea used in `build_daily_graph_features` (drop edges older than the lookback)
+    running continuously instead of once per historical day.
+  - Cycle detection: never re-run `nx.simple_cycles` over the whole graph for one new
+    edge. Ask one bounded question instead — "starting from B, is there a path back to
+    A within `cycle_max_length - 1` hops?" — a local traversal from a single node,
+    genuinely millisecond-scale, not a full-graph enumeration.
+- **Why it matters:** this project's "alert triage, not live blocking" framing (see
+  `CLAUDE.md`'s project description) isn't a simplification to apologize for — it's the
+  architecturally correct call for *this specific problem*, because typology detection
+  is inherently a windowed/relational pattern-matching problem operating on a 30-60 day
+  regulatory timeline, not a millisecond decision problem the way sanctions screening
+  is. Being able to explain *why* batch is correct here — not just that it's what got
+  built — is what separates "I trained a model on a Kaggle dataset" from "I understand
+  how this fits into a real compliance operation."
 
 ---
 

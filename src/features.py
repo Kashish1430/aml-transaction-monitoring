@@ -17,12 +17,29 @@ REQUIRED_COLUMNS = {"timestamp", "from_account_key", "to_account_key", "amount_p
 
 # (role, direction) combos to compute count/sum for. "sender"/"receiver" pick which
 # account of the transaction is of interest; "out"/"in" pick which side of *that
-# account's own history* to look at (e.g. sender_in = has the sender been receiving
-# money recently — a pass-through/layering signal, not the sender's outgoing activity).
+# account's own history* to look at. Each combo below is computed for all three windows
+# in config.yaml's windows.rolling_days ([1, 7, 30]), producing a `_count` and
+# `_amount_usd` column per window — e.g. Feature 1 alone becomes 6 actual columns
+# (sender_out_1d_count, sender_out_1d_amount_usd, sender_out_7d_count, ...).
 _COUNT_SUM_COMBOS = [
+    # Feature 1 — sender_out_{w}d_count / amount_usd: how often, and how much, has the
+    # SENDER of this transaction sent money in the past 1/7/30 days (their own outgoing
+    # velocity/volume). A sudden burst relative to their own recent baseline is a
+    # classic AML signal — most legitimate accounts have a stable, boring cadence.
     ("sender", "from_account_key", "out"),
+    # Feature 2 — sender_in_{w}d_count / amount_usd: has the SENDER been *receiving*
+    # money recently, before turning around and sending it out? Not the sender's own
+    # outgoing activity — this is a pass-through/layering signal (funds arrive and
+    # leave again quickly rather than resting in the account).
     ("sender", "from_account_key", "in"),
+    # Feature 3 — receiver_out_{w}d_count / amount_usd: has the RECEIVER of this
+    # transaction been sending money elsewhere recently? Same pass-through idea as
+    # Feature 2, but asked from the receiving side — is this account just a conduit
+    # rather than a genuine destination for funds.
     ("receiver", "to_account_key", "out"),
+    # Feature 4 — receiver_in_{w}d_count / amount_usd: how often, and how much, has the
+    # RECEIVER been collecting money from others recently — a fan-in/aggregation
+    # signal (many sources converging on one account before it moves on or cashes out).
     ("receiver", "to_account_key", "in"),
 ]
 
@@ -30,9 +47,17 @@ _COUNT_SUM_COMBOS = [
 # fan-out (sender -> many distinct receivers) and fan-in (receiver <- many distinct
 # senders). The other two combos are covered by the count/sum features above and add
 # limited marginal signal for meaningfully more compute (two-pointer, not vectorizable
-# via the merge_asof trick used for count/sum).
+# via the merge_asof trick used for count/sum). Each is also computed across all three
+# windows, producing one `_distinct_counterparties` column per window.
 _DISTINCT_COMBOS = [
+    # Feature 5 — sender_out_{w}d_distinct_counterparties: is this sender spreading
+    # money across many DIFFERENT receivers, rather than a few regular ones? A high
+    # count relative to transaction count is the fan-out typology's signature —
+    # one source, funds deliberately scattered wide to obscure the trail.
     ("sender", "from_account_key", "out"),
+    # Feature 6 — receiver_in_{w}d_distinct_counterparties: is this receiver collecting
+    # money from many DIFFERENT senders? The mirror image of Feature 5 — the fan-in
+    # typology's signature (many sources funnelling into one collection point).
     ("receiver", "to_account_key", "in"),
 ]
 
@@ -227,6 +252,11 @@ def compute_account_features(df: pd.DataFrame, windows_days: list[int]) -> pd.Da
     return features
 
 
+# Feature 7 — structuring_score_{w}d: count of this sender's own transactions in the
+# past 1/7/30 days whose USD amount sits just under the reporting threshold (e.g.
+# $9,000-$9,999.99 against a $10,000 CTR threshold). This is the smurfing/structuring
+# signature: deliberately splitting a large sum into many just-under-threshold pieces
+# to dodge the reporting requirement a single large transaction would trigger.
 def compute_structuring_scores(
     df: pd.DataFrame,
     windows_days: list[int],
@@ -261,6 +291,11 @@ def compute_structuring_scores(
     return scores
 
 
+# Feature 8 — sender_pass_through_ratio_{w}d: ratio of the sender's recent inflow to
+# recent outflow. A ratio near 1.0 means money is flowing straight through the account
+# (received, then sent back out again in roughly equal amounts) rather than
+# accumulating like a normal balance would — the classic layering signature, where an
+# account exists mainly to move funds through rather than to hold them.
 def compute_pass_through_ratios(
     account_features: pd.DataFrame, windows_days: list[int], eps: float = 1.0
 ) -> pd.DataFrame:

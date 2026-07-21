@@ -166,6 +166,7 @@ Each phase ends with something runnable/checkable — no phase depends on trusti
 
 **Phase 11 — README & portfolio polish**
 - README opens with the false-positive-reduction framing and headline result, then: live demo link (prominent, near the top), business problem, why network features matter, evaluation-choice rationale (why not accuracy), SHAP reason codes, drift monitoring, how to reproduce locally, simple architecture diagram, honest caveats (synthetic data, demo app uses a precomputed sample not live inference).
+- Business problem section should fold in the batch-vs-real-time architecture reasoning already written up in `reports/challenges.md`'s "Architecture — why this is a batch pipeline, not a real-time scoring service" entry: sanctions screening is real-time/blocking (a lookup problem), AML typology detection is batch/periodic by nature (patterns only visible across a rolling window of history, matching the 30-60 day SAR filing timeline) — this is *why* the whole system is architected as offline batch scoring feeding an analyst queue, not a simplification being apologized for.
 - MIT license, clean commit history, CI badge in README.
 - **Check:** read the README fresh, top to bottom; every numeric claim traces to `results.md` or the notebooks.
 

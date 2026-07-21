@@ -47,6 +47,10 @@ def graph_snapshot_features(
     - graph_in_cycle: whether the account sits on a directed cycle of length
       <= cycle_max_length — the cycle typology signature (funds returning toward their
       origin).
+
+    `build_daily_graph_features` calls this once per transaction and applies both a
+    `sender_` and `receiver_` prefix to every column below, so each of Features 9-13
+    here becomes 2 actual columns in the final modelling table.
     """
     simple = nx.DiGraph(g)
     cycle_accounts = _accounts_on_short_cycles(simple, cycle_max_length)
@@ -59,10 +63,30 @@ def graph_snapshot_features(
         records.append(
             {
                 "account_key": account,
+                # Feature 9 — {role}_graph_in_degree: how many DISTINCT accounts has
+                # this account received from within the lookback window? A graph-native
+                # version of fan-in, robust to one counterparty sending many small
+                # transactions (that would inflate a raw transaction count but not
+                # this — collapsed to a simple DiGraph first).
                 "graph_in_degree": in_deg,
+                # Feature 10 — {role}_graph_out_degree: how many DISTINCT accounts has
+                # this account sent to within the lookback window? Graph-native fan-out.
                 "graph_out_degree": out_deg,
+                # Feature 11 — {role}_graph_fan_in_score: in_degree's share of this
+                # account's total degree. Close to 1.0 means the account is
+                # structurally a "collector" (mostly receiving from many sources)
+                # rather than a balanced participant or a distributor.
                 "graph_fan_in_score": in_deg / total if total else 0.0,
+                # Feature 12 — {role}_graph_fan_out_score: out_degree's share of total
+                # degree — the mirror image of Feature 11; close to 1.0 means the
+                # account is structurally a "distributor."
                 "graph_fan_out_score": out_deg / total if total else 0.0,
+                # Feature 13 — {role}_graph_in_cycle: does this account sit on a
+                # directed cycle of length <= cycle_max_length within the lookback
+                # window — i.e. do funds from this account eventually loop back to it
+                # within a few hops? The cycle typology's signature: money "returning"
+                # rather than moving in one direction, a pattern a legitimate business
+                # relationship essentially never produces by accident.
                 "graph_in_cycle": account in cycle_accounts,
             }
         )
