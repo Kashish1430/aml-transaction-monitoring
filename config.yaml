@@ -6,6 +6,7 @@ seed: 42
 paths:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
+  modelling_table: "data/processed/features.parquet"
   models_dir: "models"
   figures_dir: "reports/figures"
   results_md: "reports/results.md"
@@ -19,6 +20,10 @@ dataset:
 
 windows:
   rolling_days: [1, 7, 30]
+
+graph_features:
+  cycle_max_length: 3    # bounds nx.simple_cycles enumeration on the daily account graph
+  lookback_days: 7       # trailing window the daily graph snapshot is built from, not all history
 
 rules_baseline:
   large_amount_threshold_usd: 10000  # US BSA/CTR reporting threshold — applied to USD-equivalent amount
