@@ -19,7 +19,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - **Total cost: $0.** Every tool/service choice must have a free tier that covers this project's scale (see the cost ledger in `PLAN.md`). Flag it before introducing anything that could incur cost.
 - **Must end in a live, deployed demo** (Streamlit Community Cloud target — see `PLAN.md`), not just notebooks.
 - **No leakage.** Rolling/window features must use only information available strictly before each transaction's timestamp. Train/val/test splits are time-ordered, never random k-fold.
-- **Accuracy is not a headline metric** at ~2% prevalence. Use precision@k, recall-per-typology, PR-AUC, and FP-reduction-at-equal-recall-vs-baseline instead.
+- **Accuracy is not a headline metric** at ~0.10% prevalence (confirmed real number, see Dataset section — far more extreme than the brief's ~2% estimate). Use precision@k, recall-per-typology, PR-AUC, and FP-reduction-at-equal-recall-vs-baseline instead.
 - **Every reported number must be regenerable from code** (a script or notebook cell), not manually computed once and pasted.
 
 ## Repository conventions
@@ -33,9 +33,11 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 
 ## Environment
 
-- Python 3.12, conda env `venve` in the project root (already created, currently empty — install `requirements.txt` into it).
-- Core deps: pandas, numpy, scikit-learn, xgboost, lightgbm, networkx, shap, matplotlib, seaborn, pyyaml, jupyter, streamlit, pyarrow, pytest, ruff.
+- Python 3.12, conda env `venve` in the project root. `requirements.txt` is fully installed into it already (including `kaggle` for data acquisition) — don't reinstall from scratch, just add new packages to `requirements.txt` and `pip install` the delta if a phase needs something new.
+- Core deps: pandas, numpy, scikit-learn, xgboost, lightgbm, networkx, shap, matplotlib, seaborn, pyyaml, jupyter, streamlit, pyarrow, pytest, ruff, kaggle.
 - No GPU required anywhere in this project.
+- **How to invoke tools in `venve`** (Windows conda layout, not obvious): `python.exe` lives at the env root (`venve/python.exe`), but console-script tools (`pytest`, `ruff`, `kaggle`, `jupyter-nbconvert`, etc.) live in `venve/Scripts/`. There is no plain `jupyter.exe` — use `venve/Scripts/jupyter-nbconvert.exe` directly. C: drive has previously run low on space; if `pip install` fails with "No space left on device", redirect cache/temp to D: (`--cache-dir` flag / `TMPDIR`/`TEMP`/`TMP` env vars pointed at a folder under the project), don't assume D: itself is full.
+- `.vscode/settings.json` (gitignored, local only) points the IDE's Python interpreter at `venve/python.exe` for autocomplete/lint in-editor — recreate it if it's missing and imports show as unresolved in the editor.
 
 ## Dataset
 
@@ -53,8 +55,23 @@ Confirmed against the actual files (`notebooks/01_eda.ipynb`), not assumed:
 
 The deployed Streamlit app never runs feature engineering, model inference, or SHAP live. It only reads a precomputed artifact (`app/data/demo_alerts.parquet` + a small metrics JSON/parquet) built offline by `scripts/build_demo_artifact.py` from the fully-trained pipeline. Full-dataset numbers for `results.md`/README come from running the real pipeline locally, not from the demo app. If asked to change what the live app shows, regenerate the artifact via the script — don't wire the app to heavy computation directly, or it will break on Streamlit Community Cloud's free-tier resource limits.
 
+## Git workflow
+
+`main` has GitHub branch protection (set up 2026-07-20) — this is a hard requirement, not a suggestion:
+- No direct pushes to `main`, **including from admins** (`enforce_admins: true`) — every change goes through a PR.
+- The `lint-and-test` CI check (ruff + pytest, from `.github/workflows/ci.yml`) must pass before a PR can merge.
+- `required_approving_review_count` is `0` — a human approval is *not* required to merge (would deadlock a solo repo, since GitHub blocks self-approval). CI passing is the actual gate.
+- Force-pushes and branch deletion are disabled on `main`.
+
+Practical loop for every phase (this is how Phases 2+ were actually done, follow the same shape):
+1. `git checkout -b phase-N-<short-name>` from an up-to-date `main`.
+2. Implement, test locally (`pytest -v`, `ruff check .`) until clean.
+3. Commit, `git push -u origin phase-N-<short-name>`.
+4. `gh pr create` with a summary of what changed and the real numbers/results produced.
+5. Wait for CI (`gh pr checks <number>`), fix forward on the same branch if it fails.
+6. **Let the user review and merge themselves** rather than auto-merging — they've been doing this via the GitHub UI ("Files changed" tab, then the merge button). Don't merge on their behalf unless they explicitly ask you to.
+7. After merge: `git checkout main && git pull`, delete the local and remote feature branch (`git branch -d <name>`, `git push origin --delete <name>`).
+
 ## Current status
 
-Phases 0-2 are done. Phase 2 added `src/rules_baseline.py` (large-amount/structuring/pass-through rules, USD-normalized via `fx_rates_to_usd` in `config.yaml`) with results logged in `reports/results.md`: 36.3% alert rate, 0.17% precision, 60.6% recall — the number every later model must beat. Next step is Phase 3 (`src/features.py`, `src/graph_features.py`) in `PLAN.md`.
-
-Workflow note: `main` now has branch protection (PR + passing CI required, no direct pushes, even for admins). All work happens on feature branches, e.g. `phase-2-rules-baseline`, merged via PR once CI is green.
+Phases 0-2 are done and merged to `main` (see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 3 (`src/features.py`, `src/graph_features.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
