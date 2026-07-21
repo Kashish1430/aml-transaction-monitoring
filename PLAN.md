@@ -6,7 +6,15 @@ This project turns `AML_Transaction_Monitoring_Project_Brief.md` into a deployed
 
 The brief does not cover deployment. This plan adds a deployment layer on top of the brief's pipeline and sequences the whole build into phases, each ending in something runnable/checkable, so work can resume across sessions without losing the thread. Two hard constraints from the project owner: the finished system must be **actually deployed with a live link**, and total cost must be **$0**.
 
-Starting state: empty directory except the brief and a local conda env (`venve`, Python 3.12, no packages installed). No git repo yet.
+Starting state (2026-07-19, historical): empty directory except the brief and a local conda env (`venve`, Python 3.12, no packages installed). No git repo yet. See **Progress** below for current state — this section is left as-is for context on where the project started.
+
+## Progress (keep this current — see CLAUDE.md's instruction not to let this doc go stale)
+
+- **Phase 0 — DONE.** Repo scaffolded, pushed to `github.com/Kashish1430/aml-transaction-monitoring` (public), CI green.
+- **Phase 1 — DONE.** `src/data_loader.py` loads/validates all three HI-Small files. Real numbers differ from this plan's original estimates: **prevalence is ~0.10%** (not ~2%), **date span is ~17-18 days**, and only 62% of laundering-labelled transactions map to a named typology in `Patterns.txt` (the rest are laundering but unpatterned — expected, not a bug). Full detail in `CLAUDE.md`'s Dataset section.
+- **Phase 2 — DONE.** `src/rules_baseline.py` built with one addition beyond the original plan: transaction amounts are normalized to USD via a static FX table (`config.yaml`'s `fx_rates_to_usd`) before thresholding, because the dataset's 15 currencies operate at wildly different numeric scales (checked empirically before building the rule — a flat threshold would have been silently wrong). Results in `reports/results.md`: **36.3% alert rate, 0.17% precision, 60.6% recall** on the full HI-Small dataset — this is the number Phase 4's model must beat.
+- **Phase 3 onward — NOT STARTED.** Next up: `src/features.py` + `src/graph_features.py`.
+- **Process addition not in the original plan:** GitHub branch protection was added to `main` after Phase 2 (2026-07-20) — PR + passing CI required for every change from here on, including admins. Exact rules and the working loop are documented in `CLAUDE.md`'s Git workflow section; follow that for Phase 3 onward.
 
 ## Key design decisions
 
@@ -90,7 +98,7 @@ aml-transaction-monitoring/
 
 Each phase ends with something runnable/checkable — no phase depends on trusting an earlier phase blindly.
 
-**Phase 0 — Project scaffolding & environment**
+**Phase 0 — Project scaffolding & environment [DONE]**
 - `git init`, create the folder tree above, `.gitignore` (data/, models/, `__pycache__`, `.ipynb_checkpoints`, venv).
 - `requirements.txt` pinned: pandas, numpy, scikit-learn, xgboost, lightgbm, networkx, shap, matplotlib, seaborn, pyyaml, jupyter, streamlit, pyarrow, pytest, ruff.
 - Install into the existing `venve` conda env.
@@ -99,13 +107,13 @@ Each phase ends with something runnable/checkable — no phase depends on trusti
 - `.github/workflows/ci.yml` running ruff + pytest on push.
 - **Check:** installed packages match requirements; CI runs green on the initial commit.
 
-**Phase 1 — Data acquisition, validation, EDA**
+**Phase 1 — Data acquisition, validation, EDA [DONE]**
 - Kaggle API download of HI-Small into `data/raw/` (gitignored).
 - `src/data_loader.py`: explicit schema validation (fail loudly on missing columns), timestamp parsing, unified account key (bank+account).
 - `notebooks/01_eda.ipynb` calling into `data_loader`: class balance, amount distributions (log scale) legit vs. laundering, volume over time, most-active accounts, distribution across the 8 typologies. Figures saved to `reports/figures/`.
-- **Check:** dataset stats logged (row count, class balance ~2%, date span, unique accounts); figures render and look sane.
+- **Check:** dataset stats logged (row count, class balance, date span, unique accounts); figures render and look sane. Actual: ~0.10% prevalence, not the ~2% originally estimated here — see Progress section above.
 
-**Phase 2 — Rules baseline**
+**Phase 2 — Rules baseline [DONE]**
 - `src/rules_baseline.py`: large-amount threshold, structuring (many sub-threshold txns in a short window), rapid pass-through.
 - Record alert count, precision, recall against labels — the number every later step must beat.
 - **Check:** `tests/test_rules_baseline.py` on synthetic mini-cases (a hand-built structuring pattern must fire).
