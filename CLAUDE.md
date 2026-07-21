@@ -13,6 +13,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - `AML_Transaction_Monitoring_Project_Brief.md` — the original technical brief: dataset, feature engineering, modelling, evaluation, explainability, monitoring requirements. Do not deviate from its framing without checking with the user.
 - `PLAN.md` — the execution plan: phased build order, repo layout, deployment strategy, cost constraints. Update it as phases complete or the approach changes; keep it current, not aspirational.
 - `reports/results.md` — once it exists, the single source of truth for all reported metrics. Never hand-type a number into the README that isn't traceable here.
+- `reports/challenges.md` — narrative log of non-obvious problems hit during the build (root cause, fix, why), kept for interview storytelling. Add an entry whenever a real bug or performance problem gets diagnosed and fixed — not routine implementation work, and not until the actual root cause is understood (see its own entries for the level of specificity expected).
 
 ## Hard constraints
 
