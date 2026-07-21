@@ -94,7 +94,7 @@ def load_patterns(path: str | Path) -> pd.DataFrame:
     """Parse HI-Small_Patterns.txt into one row per labelled transaction, tagged with its
     laundering typology (fan-in, fan-out, cycle, ...).
 
-    The file is not a CSV: it's blocks of
+    The file 's blockis not a CSV: its of
     "BEGIN LAUNDERING ATTEMPT - <TYPOLOGY>: <note>" / transaction rows / "END LAUNDERING
     ATTEMPT - <TYPOLOGY>". There is no transaction ID column anywhere in this dataset, so
     joining these labels back onto load_transactions' output has to happen on the shared
