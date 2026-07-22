@@ -13,6 +13,8 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - `AML_Transaction_Monitoring_Project_Brief.md` — the original technical brief: dataset, feature engineering, modelling, evaluation, explainability, monitoring requirements. Do not deviate from its framing without checking with the user.
 - `PLAN.md` — the execution plan: phased build order, repo layout, deployment strategy, cost constraints. Update it as phases complete or the approach changes; keep it current, not aspirational.
 - `reports/results.md` — once it exists, the single source of truth for all reported metrics. Never hand-type a number into the README that isn't traceable here.
+- `reports/challenges.md` — narrative log of non-obvious problems hit during the build (root cause, fix, why), kept for interview storytelling. Add an entry whenever a real bug or performance problem gets diagnosed and fixed — not routine implementation work, and not until the actual root cause is understood (see its own entries for the level of specificity expected).
+- `portfolio/business_overview.md` and `portfolio/technical_overview.md` — living portfolio write-ups for non-technical and technical readers respectively, feeding the eventual README (Phase 11). Update both at the end of every phase that changes what's built or what's known (new stage summary in the business doc, new technical section/numbers in the technical doc) — same "keep it current, not aspirational" rule as `PLAN.md`. Every number in either file must trace to `reports/results.md` or `reports/challenges.md`; never state a forward-looking result (e.g. the headline FP-reduction number) before it's actually been computed.
 
 ## Hard constraints
 
@@ -74,4 +76,4 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-2 are done and merged to `main` (see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 3 (`src/features.py`, `src/graph_features.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Phases 0-3 are done and merged to `main` (see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 4 (`src/model.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
