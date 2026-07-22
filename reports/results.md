@@ -46,3 +46,59 @@ is the project's headline result — not a standalone AUC number.
   a bug. It's also a fair reflection of why real rule-based pass-through checks are noisy.
 - Structuring's low alert count (5,764) is expected: it requires 3+ qualifying transactions
   from the *same account* clustered within 24h, a narrow pattern by design.
+
+## Phase 4 — Modelling (XGBoost + Isolation Forest)
+
+Command: `python -m src.model` (also runnable as `notebooks/03_modelling.ipynb`)
+
+Time-ordered 60/20/20 split (never a random shuffle — see `CLAUDE.md`'s no-leakage
+constraint), `scale_pos_weight` computed from the training split only.
+
+| Split | Rows | Positives | Prevalence | Time range |
+|---|---|---|---|---|
+| Train | 3,047,007 | 2,298 | 0.075% | 2022-09-01 00:00 – 2022-09-06 13:36 |
+| Val | 1,015,669 | 1,082 | 0.107% | 2022-09-06 13:36 – 2022-09-08 16:12 |
+| Test | 1,015,669 | 1,797 | 0.177% | 2022-09-08 16:12 – 2022-09-18 16:18 |
+
+`scale_pos_weight` (train-only): **1,324.94**
+
+| Metric (test split) | Value |
+|---|---|
+| PR-AUC | 0.3967 |
+| ROC-AUC | 0.9828 |
+| Precision@100 | 92.0% |
+| Precision@500 | 74.8% |
+| Precision@1000 | 60.6% |
+| Precision@5000 | 20.7% |
+
+These are sanity-check numbers confirming the model learned real signal, **not** the
+project's headline result — the full evaluation suite (recall-per-typology,
+false-positive-reduction-vs-the-Phase-2-baseline-at-equal-recall, calibration) is Phase
+5's job and will supersede this section.
+
+**Important caveat, investigated not just disclosed:** `payment_format_ACH` dominates
+feature importance. 86.6% of all laundering transactions in this dataset use ACH format,
+and ACH's laundering rate (0.75%) is ~43x the dataset's overall prevalence, while `Wire`
+and `Reinvestment` have zero laundering transactions anywhere in the data. Retraining
+with every `payment_format_*` column dropped: PR-AUC falls from 0.3967 to **0.0705**,
+ROC-AUC from 0.9828 to **0.9160**, precision@100 from 92% to **62%**. So a substantial
+share of the headline numbers above is attributable to this one categorical correlation
+— which may reflect real laundering behavior (ACH is a genuinely common layering
+channel) or may be a synthetic-generator artifact; this project can't fully distinguish
+the two from the data alone, and any performance claim should carry that caveat. The
+more load-bearing finding for this project's actual thesis: with `payment_format`
+removed, the top features are `receiver_in_30d_distinct_counterparties`,
+`sender_graph_in_cycle`, and `sender_out_7d_distinct_counterparties` — exactly the
+Phase 3 account/window and graph features, still performing far better than random
+(62% precision@100 vs. a 0.18% base rate). Full writeup in `reports/challenges.md`.
+
+**Isolation Forest (unsupervised layer):** trained on the same features, no labels.
+Top-1000 most-anomalous test transactions overlap **0%** with XGBoost's top-1000, and
+catch only 1 of 1,797 actual test-split laundering cases. Investigated, not just
+reported: the Isolation Forest's top-1000 sit at the extreme tail of raw volume
+features (`sender_out_30d_count` mean of 149,867 vs. an overall mean of 7,890, near the
+dataset's actual maximum) — it's rediscovering the highest-throughput hub accounts
+(almost certainly legitimate), not laundering-specific behavior. A defensible fix
+(log-transforming heavy-tailed features, or fitting on ratio/score features instead of
+raw counts) is noted as future work, not implemented in this phase. Full writeup in
+`reports/challenges.md`.

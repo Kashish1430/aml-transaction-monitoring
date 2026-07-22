@@ -103,6 +103,52 @@ number every later stage must beat, per `reports/results.md`.
      bound was tried first and was *slower* than the unbounded version, due to
      redundant re-insertion of overlapping-window edges.
 
+### Phase 4 — Modelling (`src/model.py`)
+- **Split:** strictly time-ordered 60/20/20 (`time_ordered_split`) — row-position split
+  on time-sorted data, not a fixed calendar cutoff (HI-Small's daily volume is too
+  uneven for that) and never a random shuffle. Surfaces a real distribution shift
+  honestly rather than hiding it: train/val/test prevalence is 0.075%/0.107%/0.177%
+  respectively, since the dataset's low-volume tail days carry disproportionately more
+  laundering activity.
+- **Imbalance handling:** `scale_pos_weight` (negatives/positives = **1,324.94**),
+  computed from the training split only — never val/test, which would leak
+  split-specific class balance into training.
+- **Model:** XGBoost, `tree_method="hist"`, early-stopped on validation PR-AUC
+  (`eval_metric="aucpr"` — the right curve under this prevalence, not accuracy or plain
+  ROC-AUC). Reasonable documented defaults, not a grid/random search (disclosed as an
+  explicit scope boundary, not silently skipped).
+- **Unsupervised layer:** Isolation Forest (`contamination="auto"`, deliberately not
+  set to the true positive rate, which would smuggle label information into an
+  "unsupervised" model) — see the two investigated findings below.
+- **Sanity-check results** (not the Phase 5 headline): test PR-AUC 0.3967, ROC-AUC
+  0.9828, precision@100 92%. Full table and caveats in `reports/results.md`.
+- **Two findings investigated in depth, not just reported** — full root-cause writeups
+  in `reports/challenges.md`:
+  1. `payment_format_ACH` dominates feature importance (86.6% of all laundering
+     transactions use ACH format, ~43x the dataset's overall ACH-specific rate vs.
+     baseline prevalence). An ablation — retraining with every `payment_format_*`
+     column dropped — shows PR-AUC falling from 0.3967 to 0.0705, confirming this one
+     categorical correlation carries a large share of the headline numbers (real
+     behavior, synthetic-generator artifact, or both — undetermined from the data
+     alone, disclosed as a caveat rather than hidden). The features that rise to the
+     top without it — `receiver_in_30d_distinct_counterparties`,
+     `sender_graph_in_cycle`, `sender_out_7d_distinct_counterparties` — are exactly the
+     Phase 3 account/window and graph features, which is the more important result for
+     this project's actual thesis.
+  2. The Isolation Forest layer has **0%** top-1000 overlap with XGBoost and catches
+     only 1 of 1,797 test-split laundering cases. Diagnosed (not just reported): its
+     top-1000 sit at the extreme tail of raw volume features (mean
+     `sender_out_30d_count` of 149,867 vs. an overall mean of 7,890, near the dataset's
+     actual maximum) — it's rediscovering high-throughput hub accounts, not laundering
+     behavior, because isolation-based detection can't distinguish "extreme but
+     legitimate" from "extreme and suspicious" on heavily right-skewed raw features.
+     Log-transforming heavy-tailed features before fitting is noted as future work,
+     not implemented, to keep this phase's scope disciplined.
+- **Serialization:** XGBoost's native `save_model` (version-portable, not pickle) plus
+  `joblib` for the Isolation Forest, with a `model_metadata.json` sidecar capturing
+  split sizes, `scale_pos_weight`, and the sanity-check metrics — all to `models/`
+  (gitignored, regenerable by rerunning `notebooks/03_modelling.ipynb`).
+
 ## Evaluation philosophy (Phase 5, not yet built)
 
 Accuracy is explicitly rejected as a metric — at 0.10% prevalence a model that flags
@@ -120,7 +166,8 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-3 of 11 complete and merged (or in PR review — see `PLAN.md`'s Progress
-section for the authoritative per-phase state). Next: Phase 4 (`src/model.py` —
-XGBoost/LightGBM with `scale_pos_weight`, strictly time-ordered train/val/test split,
-no random k-fold), then Phase 5 (evaluation against the Phase 2 baseline above).
+Phases 0-4 of 11 complete (Phase 4 in PR review as of this writing — see `PLAN.md`'s
+Progress section for the authoritative per-phase state). Next: Phase 5
+(`src/evaluate.py` — precision@k, recall-per-typology, PR-AUC/calibration as reported
+metrics, and the headline false-positive-reduction-vs-rules-baseline-at-equal-recall
+number, computed against the model saved in Phase 4).

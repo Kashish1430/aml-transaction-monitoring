@@ -82,13 +82,43 @@ itself). A first check already shows the expected direction — accounts later c
 as laundering show visibly more of these warning signs on average than ordinary accounts
 — before any actual decision-making model has even been built yet.
 
-### Stage 4 onward — not built yet
-The system that actually turns this information into a ranked, reviewable alert list
-(the headline "X% fewer alerts reviewed at the same catch rate" result), a plain-English
-explanation for every flagged alert (so an analyst — and a regulator — can see *why* it
-was flagged, not just trust a black box), a way to detect if the system's assumptions
-have gone stale over time, and a live, click-through demo. These will be added to this
-document as they're completed — see `PLAN.md` for the full build order.
+### Stage 4 — building the system that actually ranks alerts
+This stage trained the model that turns everything built so far into a single risk
+score per transaction — the first version of the system that could hand an analyst a
+ranked list instead of a flat pile of equally-weighted alerts. Early read: **looking
+only at the top 100 highest-scored transactions out of over a million, 92 of them are
+genuinely worth investigating** — compared to roughly 1 in 600 for the rules-based
+status quo from Stage 2. That's not yet the project's final, audited headline number
+(that comes once the model is measured properly against the Stage 2 baseline in the
+next stage), but it's an early, honest signal the approach works.
+
+Two things surfaced during this stage that are worth being upfront about, because
+glossing over them would undercut the project's credibility, not protect it:
+- A large share of the model's current performance rides on *one* strong signal (the
+  payment channel used — ACH transfers account for the overwhelming majority of
+  labelled laundering cases in this dataset). That could be a genuine real-world pattern
+  or a quirk of how this training data was synthetically generated — this project can't
+  fully tell which from the data alone, so it's disclosed as a caveat rather than
+  quietly relied on. Tested by retraining without that one signal: performance drops
+  substantially, but the model still comfortably beats the rules-based status quo, and
+  the signals it leans on instead are exactly the account-history and network features
+  built in the previous stage — a good sign those are carrying real weight, not just
+  theoretical value.
+- A second, "no rules, just watch for anything unusual" system was also built and
+  tested alongside the main one, as a check for laundering patterns the labelled
+  training data might not cover. It didn't work well as built — it mostly noticed a
+  handful of extremely high-volume accounts (most likely large legitimate businesses),
+  not laundering behavior — and that failure was investigated and understood rather
+  than swept aside. Knowing *why* an approach didn't work, specifically, is worth more
+  than a lucky number that happens to look good.
+
+### Stage 5 onward — not built yet
+Measuring the model properly against the Stage 2 baseline (the headline "X% fewer
+alerts reviewed at the same catch rate" result), a plain-English explanation for every
+flagged alert (so an analyst — and a regulator — can see *why* it was flagged, not just
+trust a black box), a way to detect if the system's assumptions have gone stale over
+time, and a live, click-through demo. These will be added to this document as they're
+completed — see `PLAN.md` for the full build order.
 
 ## An honest caveat
 
@@ -102,6 +132,6 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-3 of 11 are complete (data validation, rules baseline, feature engineering).
-Next: building the actual predictive model (Phase 4) and measuring the headline
-false-positive-reduction result against the Stage 2 baseline above (Phase 5).
+Phases 0-4 of 11 are complete (data validation, rules baseline, feature engineering,
+first trained model). Next: measuring the headline false-positive-reduction result
+against the Stage 2 baseline above, properly and per laundering pattern (Phase 5).

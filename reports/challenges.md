@@ -225,3 +225,113 @@ small hand-built test cases to represent full-scale behaviour.
   modelling choice rather than an apologetic workaround: a 7-day lookback is *also* the
   more honest modelling assumption, since a fan-in/fan-out/cycle motif from 15 days ago
   is stale signal for typologies that typically play out over hours to days.
+
+---
+
+## Phase 4 — Modelling
+
+### The train/val/test split surfaces a real distribution shift instead of hiding it
+- **What happened:** A strictly time-ordered 60/20/20 split (`time_ordered_split`)
+  produces train/val/test prevalence of 0.075% / 0.107% / 0.177% respectively — the
+  test split has more than double train's laundering rate.
+- **Root cause:** Not a bug — HI-Small's last several days have very low transaction
+  volume but a disproportionately high concentration of laundering activity in what
+  remains (already flagged in Phase 1/3 investigation — see `CLAUDE.md`'s Dataset
+  section). A time-ordered split, by construction, doesn't average this away the way a
+  random split would.
+- **The fix:** Nothing to fix — this is the correct, honest behavior. `scale_pos_weight`
+  is deliberately computed from the *training* split only (never val/test), so this
+  drift can't leak into how the model is weighted; it's disclosed directly in
+  `reports/results.md`'s split table instead of being smoothed over.
+- **Interview angle:** A time-aware split is only doing its job if it's allowed to
+  surface uncomfortable facts about how the data behaves over time — a model that looks
+  great on a random split but was never actually tested against a shifted future
+  distribution is the more dangerous outcome. This is also a concrete illustration of
+  why the project brief insists on time-ordered splits over random k-fold: a random
+  split here would have masked a distribution shift a production deployment would
+  actually have to face.
+
+### `payment_format_ACH` dominates feature importance — investigated, not just reported
+- **What happened:** In the first trained model, `payment_format_ACH`'s gain-based
+  importance (145,749.8) is roughly 3.5x the next-highest feature — a big enough gap to
+  be suspicious rather than simply reported as "the top feature."
+- **Root cause, found by checking rather than assuming:** 86.6% of all laundering
+  transactions in the dataset use ACH format; ACH's laundering rate (0.75%) is ~43x the
+  dataset's overall prevalence, while `Wire` and `Reinvestment` have *zero* laundering
+  transactions anywhere in the data. This is either a genuine signal (ACH is a real,
+  commonly-abused layering channel in practice) or an artifact of how IBM's AMLworld
+  generator constructs its laundering scenarios — the data alone can't fully
+  distinguish the two, which is itself the point worth disclosing rather than picking
+  the more flattering interpretation.
+- **The fix (an ablation, not a removal):** Retrained the identical model with every
+  `payment_format_*` column dropped, to quantify — not just assert — how much of the
+  model's lift depends on it. Result: test PR-AUC falls from 0.3967 to 0.0705, ROC-AUC
+  from 0.9828 to 0.9160, precision@100 from 92% to 62%. `payment_format` really is
+  carrying a large share of the headline numbers. But the ablated model still performs
+  far better than random (62% precision@100 vs. a 0.18% base rate), and — the more
+  important result for this project's actual thesis — the features that rise to the
+  top once `payment_format` is removed are `receiver_in_30d_distinct_counterparties`,
+  `sender_graph_in_cycle`, and `sender_out_7d_distinct_counterparties`: exactly the
+  Phase 3 account/window and graph features, not noise.
+- **Interview angle:** Noticing a suspiciously dominant feature and *investigating* it
+  (checking the label correlation directly, then quantifying the dependency via an
+  ablation) rather than either ignoring it or silently dropping it, is the difference
+  between reporting a number and understanding it. It also produces a more honest,
+  more interesting headline than the unqualified PR-AUC would have: "the categorical
+  payment-channel signal does a lot of work in this synthetic dataset and that's
+  disclosed plainly, but the network/behavioral features this project is actually about
+  hold up on their own once it's removed" is a stronger, more defensible claim than a
+  single unexamined AUC number.
+
+### Isolation Forest and XGBoost agree on literally nothing — and that's diagnosable
+- **What happened:** Isolation Forest, trained unsupervised on the same feature set,
+  has **zero** overlap with XGBoost's top-1000 test-set alerts, and catches only 1 of
+  1,797 actual laundering transactions in its own top-1000 — far worse than a result
+  that would even suggest "different but complementary."
+- **Root cause, found by inspecting the actual flagged transactions rather than just
+  the overlap number:** Isolation Forest's top-1000 sit at the extreme tail of raw
+  volume features — mean `sender_out_30d_count` of 149,867 against an overall test-set
+  mean of 7,890 (near the dataset's actual maximum of 168,672), and similarly extreme
+  `sender_out_30d_distinct_counterparties` and `amount_paid_usd`. It isn't finding
+  laundering-specific behavior at all — it's rediscovering the handful of
+  highest-throughput hub accounts (almost certainly legitimate high-volume businesses
+  or bank-internal accounts), because isolation-based outlier detection has no concept
+  of "extreme but legitimate" vs. "extreme and suspicious": it only measures how easy a
+  point is to isolate via random partitioning, and heavily right-skewed raw count/
+  amount features make the top of that skew trivially easy to isolate regardless of
+  label.
+- **The fix:** Not implemented in this phase, deliberately — noted as future work
+  instead, to keep Phase 4's scope disciplined per the project brief's "resist boiling
+  the ocean" guardrail: log-transforming heavy-tailed features before fitting Isolation
+  Forest, or fitting it on ratio/score features (which don't have this raw-scale
+  problem) instead of raw counts, would be the next thing to try.
+- **Interview angle:** A disappointing headline number ("0% agreement") is much less
+  interesting than the diagnosis behind it. This is a genuinely common, well-understood
+  failure mode when applying generic multivariate outlier detection directly to
+  heavy-tailed tabular features without addressing scale first — being able to name
+  *why* an unsupervised layer failed in a specific, mechanistic way (not just "it didn't
+  work") is a stronger signal of understanding than a clean agreement number would have
+  been on its own. It's also a genuine, on-brief finding: the project brief frames the
+  unsupervised layer's value as showing "where it agrees and disagrees" with the
+  supervised model, and a 0%-overlap, hub-account-chasing result *is* that finding, not
+  a failure to produce one.
+
+### Memory headroom shaped how the feature matrix gets built
+- **What happened:** `data/processed/features.parquet` (5.08M rows, 52 columns) occupies
+  ~2.85GB in memory once loaded as float64, and the development machine's available
+  memory was tight enough (checked via `psutil` before committing to an approach) that
+  this mattered for how `prepare_feature_matrix` and `time_ordered_split` were written,
+  not just as an afterthought.
+- **The fix:** Two deliberate choices, both load-bearing rather than cosmetic: engineered
+  features are downcast to float32 in `prepare_feature_matrix` (halves memory with no
+  meaningful precision loss for count/ratio/degree-style features), and
+  `time_ordered_split` skips `DataFrame.sort_values` entirely when the timestamp column
+  is already monotonic (true for this pipeline's output, verified via
+  `is_monotonic_increasing` rather than assumed) — avoiding an unnecessary full-table
+  copy on top of the 2.85GB already resident.
+- **Interview angle:** Not every performance decision needs a dramatic before/after
+  benchmark to be worth making deliberately — checking actual system headroom before
+  writing memory-hungry code, and avoiding an operation that's a no-op on this
+  pipeline's real data rather than writing "obviously correct" generic code and hoping,
+  is the same discipline as the Phase 3 performance work, just applied preemptively
+  instead of reactively.
