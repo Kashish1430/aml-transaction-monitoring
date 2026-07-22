@@ -76,4 +76,4 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-4 are done (Phase 4 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 5 (`src/evaluate.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Phases 0-5 are done (Phase 5 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result now exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Next step is Phase 6 (`src/explain.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.

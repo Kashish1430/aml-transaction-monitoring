@@ -149,14 +149,52 @@ number every later stage must beat, per `reports/results.md`.
   split sizes, `scale_pos_weight`, and the sanity-check metrics — all to `models/`
   (gitignored, regenerable by rerunning `notebooks/03_modelling.ipynb`).
 
-## Evaluation philosophy (Phase 5, not yet built)
+### Phase 5 — Evaluation (`src/evaluate.py`) — the project's headline result
 
 Accuracy is explicitly rejected as a metric — at 0.10% prevalence a model that flags
-nothing is already 99.9% "accurate." Planned metrics: precision@k (multiple k),
-recall-per-typology (all 8 patterns), PR-AUC, calibration, and the headline
-false-positive-reduction-at-equal-recall-vs-rules-baseline number — computed from code
-(`src/evaluate.py`) against the saved model, never hand-typed into `results.md` or the
-README.
+nothing is already 99.9% "accurate." Computed instead, on the model's held-out test
+split only:
+
+**>>> HEADLINE: at equal recall (68.8%), the model raises 96.6% fewer alerts than the
+rules baseline — 10,011 vs. 297,564, on the same test population. <<<**
+
+Methodology matters here as much as the number: the rules-baseline comparison is
+**not** Phase 2's full-dataset figure (36.3% alert rate, 60.6% recall — a different,
+non-comparable population), and it's **not** the rules re-run on an isolated test-only
+slice either (would cold-start the structuring/pass-through rules' rolling windows
+right at the split boundary — the same leakage failure mode Phase 3 was built to
+avoid, reappearing at a different boundary). Instead: `apply_rules_baseline` runs on
+the full dataset first (keeping every rule's complete rolling-window history), then
+the result is restricted to the test split's rows by index — the correct
+apples-to-apples comparison. The rules baseline's test-split recall (68.8%) differs
+from Phase 2's full-dataset number (60.6%) as a direct, expected result of this, and
+is disclosed as such rather than reconciled away.
+
+**Recall per typology** at the same operating point: 67.6% (`BIPARTITE`) to 89.8%
+(`FAN-IN`) across all 8 patterns — no typology dramatically weaker, including patterns
+without a dedicated graph feature (`BIPARTITE`, `STACK`, `RANDOM`), which still get
+caught at a broadly similar rate to `FAN-IN`/`CYCLE` (which the Phase 3 graph features
+specifically target).
+
+**Supporting metrics:** PR-AUC 0.3967, ROC-AUC 0.9828 (reference only), precision@100
+92.0%, precision@1000 60.6%.
+
+**A calibration finding, diagnosed not just plotted:** the model's raw score is not a
+calibrated probability — mean predicted score on the test split (7.31%) is ~41x the
+actual prevalence (0.177%). This is the direct, expected consequence of
+`scale_pos_weight=1324.94` (the same weighting that lets the model rank rare positives
+at all inflates scores for anything positive-like). Doesn't affect any number above —
+precision@k, recall-per-typology, and the headline reduction depend only on ranking,
+not the literal score — but would matter if this project ever showed an analyst a
+literal "X% chance" figure; post-hoc calibration (Platt/isotonic) is noted as future
+work, not implemented.
+
+A typology-label join (`data_loader.join_pattern_types`, matching `load_transactions`
+and `load_patterns` on every shared field since the dataset has no transaction ID) had
+to be built for the recall-per-typology table — `load_patterns`'s docstring had
+pointed at "Phase 3" for this since Phase 1, but Phase 3 never actually needed or built
+it. Verified against the previously-documented 62%/3,209-of-5,177 match rate before
+trusting it. Full writeups of all three findings above in `reports/challenges.md`.
 
 ## Tech stack
 
@@ -166,8 +204,7 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-4 of 11 complete (Phase 4 in PR review as of this writing — see `PLAN.md`'s
-Progress section for the authoritative per-phase state). Next: Phase 5
-(`src/evaluate.py` — precision@k, recall-per-typology, PR-AUC/calibration as reported
-metrics, and the headline false-positive-reduction-vs-rules-baseline-at-equal-recall
-number, computed against the model saved in Phase 4).
+Phases 0-5 of 11 complete (Phase 5 in PR review as of this writing — see `PLAN.md`'s
+Progress section for the authoritative per-phase state). The project's headline result
+now exists (see above). Next: Phase 6 (`src/explain.py` — SHAP TreeExplainer, global
+feature importance, per-alert plain-English reason codes).

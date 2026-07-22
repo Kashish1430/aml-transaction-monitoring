@@ -99,7 +99,9 @@ def load_patterns(path: str | Path) -> pd.DataFrame:
     ATTEMPT - <TYPOLOGY>". There is no transaction ID column anywhere in this dataset, so
     joining these labels back onto load_transactions' output has to happen on the shared
     field values themselves (timestamp + banks/accounts + amounts + format) — see
-    PLAN.md Phase 3 for where that join is implemented.
+    `join_pattern_types` below (Phase 5's recall-per-typology is the first thing that
+    actually needs this join; this docstring previously pointed at Phase 3, which never
+    implemented it — corrected here rather than left stale).
     """
     rows = []
     current_pattern = None
@@ -128,6 +130,48 @@ def load_patterns(path: str | Path) -> pd.DataFrame:
         patterns_df[col] = pd.to_numeric(patterns_df[col])
 
     return patterns_df
+
+
+def join_pattern_types(txns: pd.DataFrame, patterns: pd.DataFrame) -> pd.DataFrame:
+    """Attach each laundering transaction's typology label (fan-in, cycle, ...) from
+    `load_patterns`'s output onto `load_transactions`'s output, by matching on every
+    field the two tables share (there is no transaction ID anywhere in this dataset).
+
+    Returns `txns` with one new `pattern_type` column (NaN for transactions that don't
+    match a named typology block — including every legitimate transaction, since
+    Patterns.txt only ever contains laundering examples). Recovers `pattern_type` for
+    3,209 of 5,177 laundering transactions (62%) on the real HI-Small data — the
+    remaining 38% are laundering but don't match a named typology block, which is a
+    known, disclosed data limitation (see CLAUDE.md's Dataset section), not a bug in
+    this join.
+
+    Row count and duplicate-key safety are asserted, not assumed: `patterns` is
+    deduplicated on the join key first (so a txns row matches at most one pattern row),
+    and this raises loudly if that dedup would have silently dropped a genuinely
+    distinct pattern row, or if the merge somehow changes `txns`' row count.
+    """
+    join_cols = [c for c in PATTERN_COLUMNS if c != "pattern_type"]
+
+    patterns = patterns.copy()
+    patterns["from_bank"] = patterns["from_bank"].astype(txns["from_bank"].dtype)
+    patterns["to_bank"] = patterns["to_bank"].astype(txns["to_bank"].dtype)
+
+    dedup_patterns = patterns[[*join_cols, "pattern_type"]].drop_duplicates(subset=join_cols)
+    if len(dedup_patterns) != len(patterns):
+        raise ValueError(
+            "join_pattern_types: duplicate join keys within patterns — matching would "
+            "be ambiguous. This has not happened on the real HI-Small data; if it's "
+            "happening now, the dedup below would silently hide it."
+        )
+
+    merged = txns.merge(dedup_patterns, on=join_cols, how="left")
+    if len(merged) != len(txns):
+        raise ValueError(
+            "join_pattern_types: merge changed row count — duplicate join keys within "
+            "txns matched multiple pattern rows unexpectedly."
+        )
+    merged.index = txns.index
+    return merged
 
 
 def dataset_stats(df: pd.DataFrame) -> dict:

@@ -335,3 +335,95 @@ small hand-built test cases to represent full-scale behaviour.
   pipeline's real data rather than writing "obviously correct" generic code and hoping,
   is the same discipline as the Phase 3 performance work, just applied preemptively
   instead of reactively.
+
+---
+
+## Phase 5 — Evaluation
+
+### The typology-label join was a forward-reference nothing had actually built
+- **What happened:** `load_patterns`'s docstring, written back in Phase 1, said "see
+  PLAN.md Phase 3 for where that join is implemented" — the join being how a
+  transaction gets tagged with its typology (fan-in, cycle, ...), since the dataset has
+  no transaction ID to key on. When Phase 5's recall-per-typology needed exactly this
+  join, it turned out Phase 3 never actually built it — `build_modelling_table` only
+  ever carried `is_laundering` through, not `pattern_type`. A stale forward-reference
+  had been sitting uncorrected for two phases.
+- **Root cause:** Phase 3's scope was account/window and graph features, which don't
+  need typology labels — nothing in that phase's own work ever required the join, so a
+  docstring's aspirational pointer never got checked against what actually got built.
+- **The fix:** Implemented `data_loader.join_pattern_types`, matching `load_transactions`
+  and `load_patterns` output on every field the two tables share (timestamp, banks,
+  accounts, amounts, currencies, format, label). Verified empirically before trusting
+  it: zero duplicate join keys on either side of the real data, and it recovers
+  `pattern_type` for exactly 3,209 of 5,177 laundering transactions — matching
+  `CLAUDE.md`'s previously-documented 62% figure precisely, which is itself a good
+  cross-check that the join is doing the right thing. Also corrected the stale
+  docstring to point here instead of leaving it wrong for whoever reads it next.
+- **Interview angle:** Docstrings and comments that reference "where X is handled" are
+  claims, not guarantees — they can rot the same way code can, just silently, because
+  nothing fails until someone actually needs the thing being pointed at. Checking
+  `grep`-for-real rather than trusting the comment is what caught this before it became
+  a confused debugging session in Phase 5 instead of a five-minute correction.
+
+### Comparing the model against the rules baseline required re-deriving the baseline, not reusing Phase 2's number
+- **What happened:** Phase 2's `reports/results.md` reports the rules baseline's
+  performance on the *full* dataset (36.3% alert rate, 60.6% recall). Phase 5 needs to
+  compare the model against that baseline "at equal recall" — but the model is only
+  ever evaluated on its *test split* (the last ~20% of transactions by time), a
+  different, smaller, differently-composed population than the full dataset the Phase
+  2 number describes.
+- **Root cause (caught before implementing, not after):** using Phase 2's full-dataset
+  60.6% recall figure directly against the model's test-split alert count would compare
+  two different populations — not a fair "equal recall" comparison at all. And
+  recomputing the rules on an isolated test-only slice would introduce a different bug:
+  `rules_baseline.py`'s structuring and pass-through rules use rolling time windows
+  (24h, 2h) that look at an account's *prior* transactions, which for rows near the
+  start of the test split live in the training period — exactly the cold-start problem
+  Phase 3's leakage-safety work exists to avoid, just reappearing at a different split
+  boundary.
+- **The fix:** Ran `apply_rules_baseline` on the **full** dataset first — so every rule
+  keeps its complete rolling-window history right up to the test split's start — then
+  restricted the result to the test split's rows by index (`baseline_full.loc[test_df.index]`,
+  safe because `time_ordered_split` preserves original row positions as index values
+  rather than resetting per split). This gives a rules-baseline number computed on
+  *exactly* the model's test population, with no cold-start artifact. Result: the
+  rules baseline's test-split recall is 68.8%, not Phase 2's 60.6% — a real,
+  expected difference (the test split's own composition skews differently, per Phase
+  4's split table), disclosed directly in `results.md` rather than silently
+  reconciled or ignored.
+- **Interview angle:** "Fair comparison" isn't just "same metric" — it's "same
+  population, computed the same way, with the same information available at the same
+  point in time." Two different, individually-defensible mistakes were available here
+  (reuse a number from a different population, or recompute correctly-scoped but with
+  a fresh cold-start bug) and neither is obviously wrong until you think through what
+  each rule actually needs to see. Getting this right on the first attempt, by tracing
+  through what each rule depends on before writing the comparison code, is the same
+  discipline as Phase 3's leakage tests — just applied to a cross-phase comparison
+  instead of a single feature.
+
+### The model's scores aren't calibrated probabilities — diagnosed, not just plotted
+- **What happened:** The calibration reliability check (brief's Step 5) shows a stark
+  gap: transactions with a mean predicted score of ~53% are actually laundering only
+  ~1.7% of the time. Across the whole test split, the mean predicted score is 7.31%
+  against an actual prevalence of 0.177% — the model's average score is about 41x the
+  true rate.
+- **Root cause:** The direct, well-understood consequence of `scale_pos_weight=1324.94`
+  (Phase 4) — the exact mechanism that lets the model rank rare positives above the
+  overwhelming negative class inflates predicted scores for anything resembling a
+  positive, and that inflation is what breaks calibration. It's the same knob doing two
+  things: enabling useful ranking, and destroying probability meaning, as a package
+  deal, not two separate problems.
+- **The fix:** Not implemented, and deliberately scoped as future work rather than
+  rushed in: Platt scaling or isotonic regression on the validation split would recover
+  a calibrated probability if one were ever needed (e.g. showing an analyst a literal
+  "X% chance of laundering" figure). Not needed for anything currently reported —
+  precision@k, recall-per-typology, and the headline false-positive-reduction number
+  all depend only on the model's *ranking*, which this distortion doesn't touch.
+- **Interview angle:** Knowing that a metric result doesn't invalidate a model — because
+  the thing that broke (calibration) isn't the thing the headline claims depend on
+  (ranking) — is more useful than either ignoring the bad calibration plot or panicking
+  about it. The brief asks for a calibration check specifically because "analysts triage
+  by score," and reporting a genuinely broken calibration plot alongside a clear
+  explanation of *why* it's broken and *why it doesn't matter for this project's actual
+  claims* is a stronger, more honest result than a falsely reassuring plot would have
+  been.
