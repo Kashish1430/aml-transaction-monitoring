@@ -78,7 +78,7 @@ false-positive-reduction-vs-the-Phase-2-baseline-at-equal-recall, calibration) i
 
 **Important caveat, investigated not just disclosed:** `payment_format_ACH` dominates
 feature importance. 86.6% of all laundering transactions in this dataset use ACH format,
-and ACH's laundering rate (0.75%) is ~43x the dataset's overall prevalence, while `Wire`
+and ACH's laundering rate (0.75%) is ~7.3x the dataset's overall prevalence, while `Wire`
 and `Reinvestment` have zero laundering transactions anywhere in the data. Retraining
 with every `payment_format_*` column dropped: PR-AUC falls from 0.3967 to **0.0705**,
 ROC-AUC from 0.9828 to **0.9160**, precision@100 from 92% to **62%**. So a substantial

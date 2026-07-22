@@ -125,8 +125,8 @@ number every later stage must beat, per `reports/results.md`.
 - **Two findings investigated in depth, not just reported** — full root-cause writeups
   in `reports/challenges.md`:
   1. `payment_format_ACH` dominates feature importance (86.6% of all laundering
-     transactions use ACH format, ~43x the dataset's overall ACH-specific rate vs.
-     baseline prevalence). An ablation — retraining with every `payment_format_*`
+     transactions use ACH format; ACH's laundering rate is ~7.3x the dataset's overall
+     prevalence). An ablation — retraining with every `payment_format_*`
      column dropped — shows PR-AUC falling from 0.3967 to 0.0705, confirming this one
      categorical correlation carries a large share of the headline numbers (real
      behavior, synthetic-generator artifact, or both — undetermined from the data

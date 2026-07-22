@@ -256,7 +256,7 @@ small hand-built test cases to represent full-scale behaviour.
   importance (145,749.8) is roughly 3.5x the next-highest feature — a big enough gap to
   be suspicious rather than simply reported as "the top feature."
 - **Root cause, found by checking rather than assuming:** 86.6% of all laundering
-  transactions in the dataset use ACH format; ACH's laundering rate (0.75%) is ~43x the
+  transactions in the dataset use ACH format; ACH's laundering rate (0.75%) is ~7.3x the
   dataset's overall prevalence, while `Wire` and `Reinvestment` have *zero* laundering
   transactions anywhere in the data. This is either a genuine signal (ACH is a real,
   commonly-abused layering channel in practice) or an artifact of how IBM's AMLworld
@@ -427,3 +427,67 @@ small hand-built test cases to represent full-scale behaviour.
   explanation of *why* it's broken and *why it doesn't matter for this project's actual
   claims* is a stronger, more honest result than a falsely reassuring plot would have
   been.
+
+### The system flags transactions, not accounts — worth being precise about
+- **The question:** `is_laundering` is a per-transaction label, and every metric in
+  this project (precision@k, recall-per-typology, the headline reduction) is computed
+  at transaction granularity. But nearly every feature driving those scores describes
+  *account*-level rolling history and network position (`sender_out_7d_count`,
+  `sender_graph_in_cycle`, ...), not the transaction's own standalone attributes. So
+  which is it — is this an account-risk system or a transaction-risk system?
+- **The answer:** Transaction-level classification, using account-level and
+  network-level context features. Each row scored is one transaction; what makes that
+  score meaningful is what the sender's and receiver's *recent history and network
+  position* look like as of that transaction's timestamp, not the transaction's own
+  amount and payment format alone (Feature 1-13 in `src/features.py`/
+  `src/graph_features.py`'s module docstrings are all either sender- or
+  receiver-account aggregates).
+- **Checked, not assumed:** whether this matters in practice depends on how
+  concentrated the alerts are on a small number of repeat accounts. At the headline
+  operating point, the model's 10,011 alerted transactions touch 13,783 distinct
+  accounts — 68.8% of the theoretical maximum (20,022, if every transaction's sender
+  and receiver were entirely unique). The rules baseline's 297,564 alerts touch
+  134,036 distinct accounts, and the 1,797 true laundering transactions in the test
+  split touch 2,199 distinct accounts. None of these show heavy concentration on a
+  small hub-account set — see `investigations/phase5_evaluation/
+  03_transaction_vs_account_level_alerts.py`.
+- **An honest gap this surfaces:** a real deployed system would very likely *bundle*
+  multiple flagged transactions from the same account into one case for an analyst to
+  review together, rather than handing over thousands of separate transaction-level
+  alerts one at a time. That bundling/case-management step isn't built here — noted as
+  a real scope gap, not something the headline 96.6% reduction number accounts for
+  (it measures alert *volume*, and bundling would reduce both the model's and the
+  baseline's effective review counts somewhat, though not necessarily by the same
+  factor for each).
+- **Interview angle:** "What's the unit of prediction, and does it match the unit a
+  human actually acts on?" is a question worth being able to answer precisely for any
+  ML system, not just this one — a fluent "yes we use account features" answer isn't
+  the same as being able to say exactly what gets scored, what an analyst would
+  actually review, and where the gap between the two currently sits.
+
+### A caught arithmetic error: "43x" should have been "7.3x"
+- **What happened:** While building the `investigations/` folder to make this
+  project's ad-hoc analysis scripts reproducible (rather than leaving them in a local
+  scratch directory), re-running the ACH-correlation investigation surfaced a
+  discrepancy: ACH's laundering rate (0.7462%) divided by the dataset's overall
+  prevalence (0.1019%) is **7.3x**, not the "~43x" figure already written into
+  `reports/results.md`, `reports/challenges.md`, `PLAN.md`, and
+  `portfolio/technical_overview.md` from Phase 4 — three of which were already merged
+  to `main`.
+- **Root cause:** A plain arithmetic slip made once, during Phase 4, that then
+  propagated by being copied into four separate documents rather than recomputed each
+  time — nothing caught it because nothing had re-derived the number from scratch
+  since. The direction of the finding (ACH is heavily overrepresented in laundering
+  transactions) was never in question; only the specific multiplier was wrong.
+- **The fix:** Recomputed directly (4483 ACH-format laundering transactions / 600,797
+  ACH-format transactions = 0.7462%; 5,177 / 5,078,345 overall = 0.1019%; ratio =
+  7.32x) and corrected all four documents plus this investigation script's own
+  docstring, which had been written with the same wrong figure before being checked
+  against a live run.
+- **Interview angle:** The catch itself is the point, not the mistake — a number that
+  sat unchallenged in four merged documents got caught specifically *because* the
+  investigation script was built to be re-run and re-verified, not just to reproduce a
+  plot once and be trusted forever. This is the same argument for why this whole
+  `investigations/` folder exists: a claim that was checked once and then copied
+  around is a liability, and a script that recomputes it from the raw data every time
+  it's run is what actually keeps a project's numbers honest over its lifetime.
