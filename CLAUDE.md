@@ -76,4 +76,4 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-3 are done and merged to `main` (see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 4 (`src/model.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Phases 0-4 are done (Phase 4 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). Next step is Phase 5 (`src/evaluate.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
