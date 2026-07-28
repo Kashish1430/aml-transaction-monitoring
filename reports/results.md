@@ -378,3 +378,89 @@ the significant band (20 → 23) and put `payment_format_Reinvestment` at rank 2
 - **The `epsilon` floor bounds an emptied bin's contribution** rather than letting it go to
   infinity, so an extreme PSI's magnitude is partly a function of that constant. It does
   not change which band a value lands in at any plausible epsilon.
+
+---
+
+## Phase 8 — Demo artifact (what the deployed app will read)
+
+Command: `python -m scripts.build_demo_artifact`
+
+Writes the two files the Streamlit app loads. Nothing in the app recomputes any of this
+(CLAUDE.md's deployment model): Streamlit Community Cloud's ~1 CPU / ~1GB RAM cannot hold
+the 728MB modelling table, let alone score it or run SHAP over it.
+
+| Artifact | Size | Contents |
+|---|---|---|
+| `app/data/demo_alerts.parquet` | **15.3 MB** (target <20MB) | 30,000 rows x 126 columns |
+| `app/data/demo_metrics.json` | 36 KB | headline, PR curve, per-typology recall, calibration, PSI series, global SHAP importance |
+
+The parquet carries, per row: display fields (timestamp, banks, accounts, amount, currency,
+format), `model_score`, `rank`, `in_alert_queue`, `is_laundering`, `pattern_type`,
+`is_tail_population`, both reason-code variants, and — prefixed `feat_*` / `shap_*` — all
+54 raw feature values with their 54 SHAP contributions, so the app can draw a genuine
+waterfall without shap installed.
+
+### The sample, and what it does and doesn't preserve
+
+| Stratum | Rows | Sampled? |
+|---|---|---|
+| Every test-split positive | 1,797 | no — all kept |
+| The equal-recall alert queue | 10,011 | no — ships whole |
+| Negatives, stratified across score deciles | 19,429 | yes, seeded |
+| **Total** | **30,000** | of 1,015,669 test rows |
+
+**Ranks are true ranks.** Scores, ranks and the alert queue are computed over the complete
+1,015,669-row test split *before* sampling, so rank 1 is the highest-scored transaction in
+the test split, not the highest-scored survivor of sampling. Verified in CI: the queue is
+exactly ranks 1–10,011 with no holes, and score is monotone non-increasing in rank.
+
+**The artifact reproduces every headline number exactly**, recomputed from the pipeline
+rather than copied from this file: 10,011 vs. 297,564 alerts at 68.8% matched recall
+(**96.6%** reduction), **96.2%** excluding the 2022-09-11+ tail, PR-AUC 0.3967, ROC-AUC
+0.9828, precision@100 92%, and the same per-typology recall table as Phase 5.
+
+### The tail is over-represented, on purpose and on the record
+
+Keeping every positive necessarily over-weights the Phase 7 tail, because that tail holds
+36.4% of test positives in 0.109% of test rows:
+
+| | Share of rows |
+|---|---|
+| Tail in the real test split | 0.109% |
+| Tail in the demo artifact | **3.097%** (~28x) |
+
+This is not corrected by resampling — doing so would distort the alert queue the headline
+describes. Instead every row carries `is_tail_population`, both shares are recorded in the
+metrics JSON, and the tail-excluded headline (96.2%) ships alongside the headline, so the
+app can filter it and a reviewer can see the effect rather than take it on trust.
+
+### SHAP fidelity of the shipped file
+
+The shipped `shap_*` columns plus the shipped base value (0.123039, derived via
+`explain.shap_base_value`, never `TreeExplainer.expected_value`) reconstruct the shipped
+`model_score` to a **maximum absolute error of 5.2e-07** (mean 2.9e-08) across all 30,000
+rows — float32 storage rounding, nothing else. Asserted in CI, because an explanation that
+silently describes a different prediction than the one being ranked is the worst available
+failure mode for this layer.
+
+### Reason-code variants in the artifact
+
+Both ship. Divergence between them is **99.87% inside the alert queue** — matching Phase 6's
+99.86% ACH-dominance figure on an independently constructed sample — and 33.53% outside it,
+for a mechanical reason documented in `challenges.md`: off-queue rows are mostly Cheque/
+Credit Card, where the `payment_format_ACH` one-hot contributes *negatively* (mean −1.52 vs.
++2.25 on ACH rows) and is therefore dropped from both variants by positive-only
+`top_contributors`. The variants diverge exactly where the model is alerting, which is where
+it matters.
+
+### Honest limitations
+
+- **The app shows a sample, the reported numbers come from the full split.** Every metric in
+  `demo_metrics.json` is computed on all 1,015,669 test rows; only the browsable table is
+  sampled. The app must say so, and the README will.
+- **Below-the-queue rows are a stratified sample, so counts in that region are not
+  population counts.** Ranks and scores remain true, but "how many alerts scored between X
+  and Y" cannot be answered from the artifact alone.
+- **15.3 MB is comfortable but not free.** Most of it is the 108 `feat_*`/`shap_*` columns.
+  Shipping only the top-N contributors per row would cut it substantially, at the cost of the
+  full waterfall — kept for now since the budget holds.

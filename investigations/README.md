@@ -79,3 +79,11 @@ venve/python.exe investigations/phase3_feature_engineering/01_groupby_vs_vectori
 - `03_tail_population_psi_cannot_see.py` — quantifies the 2022-09-11+ tail (PSI 10.40
   aggregated, `insufficient_data` on every individual day) and re-derives the Phase 5
   headline with the tail removed to confirm the result doesn't depend on it.
+
+**Phase 8 — demo artifact** (see `reports/challenges.md`'s Phase 8 section)
+- `01_reason_code_divergence_is_queue_specific.py` — explains why the faithful and
+  behavioural reason codes differ on only ~56% of the demo artifact when Phase 6 measured
+  99.86% ACH dominance: divergence is 99.87% *inside* the alert queue and 33.53% outside
+  it, because off-queue rows are mostly Cheque/Credit Card and the `payment_format_ACH`
+  one-hot then contributes negatively (mean −1.52 vs. +2.25 on ACH rows), so positive-only
+  `top_contributors` drops it from both variants anyway. Reads the committed artifact.

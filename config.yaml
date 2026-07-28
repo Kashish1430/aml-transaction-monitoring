@@ -77,3 +77,8 @@ monitoring:
 
 demo_artifact:
   target_rows: 30000                 # all positives + stratified negative sample, target <20MB parquet
+  # First day of the anomalous late-dataset tail found in Phase 7: from here daily volume
+  # collapses (654,467 -> 11 rows), laundering rate goes to 59.12% and payment format to
+  # 100% ACH. Not filtered out — flagged per row in the demo artifact and used to re-derive
+  # the headline without it, so the result is known not to depend on it (reports/results.md).
+  tail_start_date: "2022-09-11"

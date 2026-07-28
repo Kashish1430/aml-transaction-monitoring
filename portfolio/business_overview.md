@@ -224,9 +224,39 @@ recalculated with it removed entirely. The 96.6% reduction becomes 96.2% — the
 not depend on it. That check was run because a sceptical reviewer would rightly ask, and
 the answer should be a number rather than a reassurance.
 
-### Stage 8 onward — not built yet
-The bundled demo data and a live, click-through dashboard. These will be added to this
-document as they're completed — see `PLAN.md` for the full build order.
+### Stage 8 — packaging the results so a reviewer can actually click through them
+
+A working demo is worth more than any table of numbers, but the demo has to be honest
+about what it's showing. The full dataset is five million transactions; a free hosted web
+app can't hold that, so the app is given a prepared extract of 30,000 transactions
+(15 MB) instead of the raw data.
+
+The care here went into what an extract is allowed to change. Two things were protected:
+
+- **The queue positions are real.** The model's scoring and ranking are done across the
+  whole held-out period of one million transactions *first*, and only then are rows
+  selected for the demo. So "alert #1" in the dashboard is genuinely the single
+  highest-priority transaction the model found in that period — not merely the best one
+  that happened to survive the extract. It would have been very easy to do this the other
+  way round and show a number that quietly meant something weaker.
+- **The alert queue is complete.** All 10,011 alerts behind the headline result are
+  included, not a sample of them, because those alerts *are* the result.
+
+The extract also inherits one distortion that couldn't be removed without breaking the
+above: because every known laundering case is kept, the unusual final few days of the
+dataset (described in Stage 7) end up making up about 3% of the demo data instead of their
+true 0.1%. Rather than quietly rebalance it, every row is tagged so it can be filtered, and
+both figures are recorded alongside the results — together with the headline recalculated
+without those days at all (96.2% instead of 96.6%), so a reviewer can see for themselves
+that the result doesn't rest on them.
+
+Finally, the plain-English reason for each alert, and the full breakdown behind it, are
+calculated in advance and stored with each row — so the dashboard can explain any alert
+instantly without doing heavy computation while someone waits.
+
+### Stage 9 onward — not built yet
+The live, click-through dashboard itself, and its public deployment. These will be added
+to this document as they're completed — see `PLAN.md` for the full build order.
 
 ## An honest caveat
 
@@ -240,7 +270,8 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-7 of 11 are complete (data validation, rules baseline, feature engineering,
+Phases 0-8 of 11 are complete (data validation, rules baseline, feature engineering,
 first trained model, the headline evaluation result above, a plain-English justification
-attached to every alert, and the early-warning drift layer described in Stage 7). Next:
-the bundled demo data and the live, click-through dashboard (Phases 8-10).
+attached to every alert, the early-warning drift layer described in Stage 7, and the
+prepared demo extract described in Stage 8). Next: the live, click-through dashboard and
+its public deployment (Phases 9-10).
