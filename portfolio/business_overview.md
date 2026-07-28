@@ -254,9 +254,37 @@ Finally, the plain-English reason for each alert, and the full breakdown behind 
 calculated in advance and stored with each row — so the dashboard can explain any alert
 instantly without doing heavy computation while someone waits.
 
-### Stage 9 onward — not built yet
-The live, click-through dashboard itself, and its public deployment. These will be added
-to this document as they're completed — see `PLAN.md` for the full build order.
+### Stage 9 — the dashboard an analyst would actually sit in front of
+
+The system now has a working front end, built around what the job actually involves rather
+than around the model. Four views:
+
+- **Alert Queue** — the ranked worklist. Highest-priority alert first, with the
+  plain-English reason attached to each row, and filters for laundering type, payment
+  method, date, amount and specific accounts or banks. An analyst can export what they're
+  looking at.
+- **Alert Detail** — one alert, fully opened up: the reason for it, a chart showing exactly
+  which factors pushed the score up and which pushed it down and by how much, and the
+  complete underlying figures for anyone who wants to check the working.
+- **Model Performance** — the honest scorecard: the headline comparison against the
+  rules-based baseline, how well the model finds each of the eight laundering patterns, and
+  the drift monitoring from Stage 7.
+- **About** — what the system is, how it works, and every caveat, including that the data
+  is synthetic and that the browsable table is a prepared sample.
+
+Two things were deliberate. The dashboard **never re-orders the queue itself** — the
+priority ranking was calculated across the full held-out period and is displayed exactly as
+calculated. And wherever a view drops below the alert cut-off into sampled data, it *says
+so on screen*, rather than presenting a sample count as though it were a real one.
+
+Testing this found two faults that would otherwise have shown up on the public site: one
+where clearing a filter crashed the queue view, and one where the app would have failed to
+start at all once deployed, for a reason no amount of local testing would have revealed
+(the test setup happened to hide it). Both are documented.
+
+### Stage 10 onward — not built yet
+Publishing the dashboard to a public web address, and the final written summary. These will
+be added to this document as they're completed — see `PLAN.md` for the full build order.
 
 ## An honest caveat
 
@@ -270,8 +298,8 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-8 of 11 are complete (data validation, rules baseline, feature engineering,
+Phases 0-9 of 11 are complete (data validation, rules baseline, feature engineering,
 first trained model, the headline evaluation result above, a plain-English justification
-attached to every alert, the early-warning drift layer described in Stage 7, and the
-prepared demo extract described in Stage 8). Next: the live, click-through dashboard and
-its public deployment (Phases 9-10).
+attached to every alert, the early-warning drift layer described in Stage 7, the prepared
+demo extract of Stage 8, and the working dashboard of Stage 9). Next: publishing it to a
+public web address (Phase 10) and the final write-up (Phase 11).

@@ -423,6 +423,48 @@ turns `np.int64` into a quoted string (`np.float64` subclasses `float` and survi
 `to_json` — real JSON numbers, and `null` instead of the invalid bare `NaN` token that the
 thin PSI slices would otherwise have emitted.
 
+### Phase 9 — Streamlit app (`app/streamlit_app.py`, `app/artifact.py`)
+
+Four tabs — Alert Queue, Alert Detail, Model Performance, About — reading only the two
+Phase 8 artifacts. No feature engineering, no inference, no SHAP at request time;
+`app/requirements.txt` is streamlit/pandas/pyarrow/plotly/numpy, pinned to the same
+versions as the root requirements so what runs locally is what deploys.
+
+**Split into two modules, deliberately.** A Streamlit script executes top-to-bottom on
+import, so any logic in the entrypoint cannot be reached by a test without starting the UI.
+All loading, filtering and waterfall assembly lives in `app/artifact.py` as pure functions
+over a DataFrame or dict; `streamlit_app.py` is layout and chart construction only, thin
+enough to review by reading. 24 tests cover the app (16 on the data layer, 8 end-to-end),
+taking the suite from 123 to **147**.
+
+**Two invariants the app enforces.** It never re-ranks — `load_alerts` sorts by the shipped
+`rank` and every filter is a mask over that order, so "rank 1" keeps meaning "highest-scored
+transaction in the held-out split" rather than "highest-scored row that survived sampling".
+And it distinguishes population counts from sample counts: only the 10,011-alert queue and
+the 1,797 positives ship complete, so any view reaching below the cut-off is labelled on
+screen as sampled.
+
+**PLAN.md's Phase 9 check is executable.** `tests/test_app_smoke.py` runs the real script
+headless via `streamlit.testing.v1.AppTest` and asserts on rendered elements, so "click
+through all four tabs, no exceptions" runs in CI instead of depending on someone
+remembering. It found two defects, both of which would have reached the public URL:
+
+- **`st.slider` raises when `min_value == max_value`.** The guard `max(10, min(2000, n))`
+  was written to stop the maximum falling below the minimum and instead made them equal, so
+  any filter narrowing the view to <=10 rows crashed the queue tab — an emptied multiselect,
+  a nonsense account search, a high score floor. Fixed by branching on the row count. The
+  first fix used `st.stop()` for the empty case, which was worse: `st.stop()` halts the whole
+  script run, so an empty filter would have blanked the Performance and About tabs too.
+- **`from app import artifact` fails under the real server.** `streamlit run
+  app/streamlit_app.py` puts the *script's* directory on `sys.path`, not the repo root, so
+  the package path `app.artifact` does not resolve — `ModuleNotFoundError` on deploy. Every
+  local check passed because both pytest (`pythonpath = ["."]`) and AppTest run with the repo
+  root already on the path: the test harness creates the exact condition that hides the bug,
+  so no amount of test coverage would have caught it. Fixed with an explicit `sys.path`
+  insert, and verified by reconstructing the deployment path rather than by reasoning about
+  it. The generalisable point is that for environment-dependent behaviour, a passing test in
+  the wrong environment is evidence about the wrong thing.
+
 ## Tech stack
 
 Python 3.12 · pandas / numpy · scikit-learn · xgboost / lightgbm · networkx · shap ·
@@ -431,10 +473,11 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-8 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
+Phases 0-9 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
 per-phase state. The project's headline result exists, every alert carries a grounded,
 plain-English reason code, the result is known to survive removing the dataset's anomalous
-tail (96.2% vs. 96.6%), and both artifacts the live app will read are built, verified and
-committed (15.3 MB parquet + 36 KB metrics JSON). 123 tests, including integrity checks
-that run against the committed artifact itself. Next: the Streamlit app and its deployment
-(Phases 9-10).
+tail (96.2% vs. 96.6%), both artifacts the app reads are built and committed (15.3 MB
+parquet + 36 KB metrics JSON), and the four-tab dashboard runs against them. 147 tests,
+including integrity checks against the committed artifact and headless end-to-end runs of
+the app itself. Next: deployment to Streamlit Community Cloud (Phase 10) and the README
+(Phase 11).

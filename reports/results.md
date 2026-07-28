@@ -464,3 +464,58 @@ it matters.
 - **15.3 MB is comfortable but not free.** Most of it is the 108 `feat_*`/`shap_*` columns.
   Shipping only the top-N contributors per row would cut it substantially, at the cost of the
   full waterfall — kept for now since the budget holds.
+
+---
+
+## Phase 9 — Streamlit app
+
+Command: `streamlit run app/streamlit_app.py`
+
+The Analyst Alert-Triage Dashboard, in four tabs. It reads only the two Phase 8 artifacts
+and computes nothing about the model — no feature engineering, no inference, no SHAP.
+`app/requirements.txt` therefore excludes shap/xgboost/scikit-learn entirely.
+
+| Tab | Shows |
+|---|---|
+| **Alert Queue** | Rank-ordered queue with the behavioural reason code inline; filters for typology, payment format, date, minimum score, account/bank search, queue-only, and the anomalous tail; top-N slider and CSV export. |
+| **Alert Detail** | Per-alert SHAP waterfall (top 10 contributions + an aggregated remainder), both reason-code variants, full 54-feature table with values and contributions. |
+| **Model Performance** | Headline callout, PR curve against the prevalence baseline, recall-per-typology, score-PSI-over-time with bands, global SHAP importance, precision@k. |
+| **About** | Framing, how it works, and the caveats below. |
+
+### Two structural rules the app follows
+
+- **It never re-ranks.** `load_alerts` sorts by the shipped `rank` and every filter is a
+  mask over that order. Recomputing a rank over the 30,000 shipped rows would redefine
+  "rank 1" from *highest-scored transaction in the held-out split* to *highest-scored row
+  that survived sampling*. Asserted in `tests/test_app_artifact.py`.
+- **It labels sample counts as sample counts.** Only the 10,011-alert queue and the 1,797
+  positives ship complete, so any view reaching below the cut-off gets an explicit warning
+  that counts there are not population counts (`queue_stats(...)["population_exact"]`).
+
+### Verification
+
+PLAN.md's Phase 9 check ("click through all four tabs, no exceptions") is executed rather
+than remembered: `tests/test_app_smoke.py` runs the real script headless through
+`streamlit.testing.v1.AppTest` and asserts on the rendered elements. **24 tests** cover the
+app (16 on the data layer, 8 end-to-end); the suite is **147 total**, up from 123.
+
+Two defects were found this way and fixed — both would have reached the deployed URL:
+
+| Defect | Effect |
+|---|---|
+| `st.slider` raises when `min_value == max_value` | Any filter narrowing the view to ≤10 rows crashed the queue tab |
+| `from app import artifact` | `streamlit run` puts `app/` on `sys.path`, not the repo root — `ModuleNotFoundError` on Streamlit Cloud, invisible under pytest |
+
+Both are written up in `challenges.md`.
+
+### Honest limitations
+
+- **The waterfall labels features, it does not interpret them.** `prettify_feature` is
+  cosmetic only; the interpretation lives in the precomputed reason codes. A second copy
+  of the explanation logic in a module that cannot import `src.explain` is a second copy
+  that can drift out of agreement with the first.
+- **The `AppTest` harness is not a browser.** It exercises the script and its widget
+  state, not rendering, CSS or the plotly charts themselves.
+- **Filter semantics distinguish "untouched" from "emptied".** An untouched multiselect
+  means no constraint; an emptied one means show nothing. Tested, because collapsing the
+  two would make clearing a filter look like a no-op.

@@ -1,6 +1,14 @@
 # Slim deps for Streamlit Community Cloud — the app only reads precomputed artifacts,
 # it never runs feature engineering, model inference, or SHAP live (see CLAUDE.md).
+#
+# Pinned to the same versions as the root requirements.txt, so what runs locally is what
+# deploys. Notably absent and deliberately so: shap, xgboost, scikit-learn — every model
+# output the app shows was precomputed by scripts/build_demo_artifact.py.
 streamlit==1.35.0
 pandas==2.2.2
 pyarrow==16.1.0
 plotly==5.22.0
+# Declared explicitly rather than relied on as a pandas transitive dependency: app/artifact.py
+# imports numpy directly, and a direct import that isn't a declared dependency is one
+# upstream packaging change away from an ImportError on a fresh deploy.
+numpy==1.26.4
