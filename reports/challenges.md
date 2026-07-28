@@ -256,7 +256,7 @@ small hand-built test cases to represent full-scale behaviour.
   importance (145,749.8) is roughly 3.5x the next-highest feature — a big enough gap to
   be suspicious rather than simply reported as "the top feature."
 - **Root cause, found by checking rather than assuming:** 86.6% of all laundering
-  transactions in the dataset use ACH format; ACH's laundering rate (0.75%) is ~43x the
+  transactions in the dataset use ACH format; ACH's laundering rate (0.75%) is ~7.3x the
   dataset's overall prevalence, while `Wire` and `Reinvestment` have *zero* laundering
   transactions anywhere in the data. This is either a genuine signal (ACH is a real,
   commonly-abused layering channel in practice) or an artifact of how IBM's AMLworld
@@ -335,3 +335,159 @@ small hand-built test cases to represent full-scale behaviour.
   pipeline's real data rather than writing "obviously correct" generic code and hoping,
   is the same discipline as the Phase 3 performance work, just applied preemptively
   instead of reactively.
+
+---
+
+## Phase 5 — Evaluation
+
+### The typology-label join was a forward-reference nothing had actually built
+- **What happened:** `load_patterns`'s docstring, written back in Phase 1, said "see
+  PLAN.md Phase 3 for where that join is implemented" — the join being how a
+  transaction gets tagged with its typology (fan-in, cycle, ...), since the dataset has
+  no transaction ID to key on. When Phase 5's recall-per-typology needed exactly this
+  join, it turned out Phase 3 never actually built it — `build_modelling_table` only
+  ever carried `is_laundering` through, not `pattern_type`. A stale forward-reference
+  had been sitting uncorrected for two phases.
+- **Root cause:** Phase 3's scope was account/window and graph features, which don't
+  need typology labels — nothing in that phase's own work ever required the join, so a
+  docstring's aspirational pointer never got checked against what actually got built.
+- **The fix:** Implemented `data_loader.join_pattern_types`, matching `load_transactions`
+  and `load_patterns` output on every field the two tables share (timestamp, banks,
+  accounts, amounts, currencies, format, label). Verified empirically before trusting
+  it: zero duplicate join keys on either side of the real data, and it recovers
+  `pattern_type` for exactly 3,209 of 5,177 laundering transactions — matching
+  `CLAUDE.md`'s previously-documented 62% figure precisely, which is itself a good
+  cross-check that the join is doing the right thing. Also corrected the stale
+  docstring to point here instead of leaving it wrong for whoever reads it next.
+- **Interview angle:** Docstrings and comments that reference "where X is handled" are
+  claims, not guarantees — they can rot the same way code can, just silently, because
+  nothing fails until someone actually needs the thing being pointed at. Checking
+  `grep`-for-real rather than trusting the comment is what caught this before it became
+  a confused debugging session in Phase 5 instead of a five-minute correction.
+
+### Comparing the model against the rules baseline required re-deriving the baseline, not reusing Phase 2's number
+- **What happened:** Phase 2's `reports/results.md` reports the rules baseline's
+  performance on the *full* dataset (36.3% alert rate, 60.6% recall). Phase 5 needs to
+  compare the model against that baseline "at equal recall" — but the model is only
+  ever evaluated on its *test split* (the last ~20% of transactions by time), a
+  different, smaller, differently-composed population than the full dataset the Phase
+  2 number describes.
+- **Root cause (caught before implementing, not after):** using Phase 2's full-dataset
+  60.6% recall figure directly against the model's test-split alert count would compare
+  two different populations — not a fair "equal recall" comparison at all. And
+  recomputing the rules on an isolated test-only slice would introduce a different bug:
+  `rules_baseline.py`'s structuring and pass-through rules use rolling time windows
+  (24h, 2h) that look at an account's *prior* transactions, which for rows near the
+  start of the test split live in the training period — exactly the cold-start problem
+  Phase 3's leakage-safety work exists to avoid, just reappearing at a different split
+  boundary.
+- **The fix:** Ran `apply_rules_baseline` on the **full** dataset first — so every rule
+  keeps its complete rolling-window history right up to the test split's start — then
+  restricted the result to the test split's rows by index (`baseline_full.loc[test_df.index]`,
+  safe because `time_ordered_split` preserves original row positions as index values
+  rather than resetting per split). This gives a rules-baseline number computed on
+  *exactly* the model's test population, with no cold-start artifact. Result: the
+  rules baseline's test-split recall is 68.8%, not Phase 2's 60.6% — a real,
+  expected difference (the test split's own composition skews differently, per Phase
+  4's split table), disclosed directly in `results.md` rather than silently
+  reconciled or ignored.
+- **Interview angle:** "Fair comparison" isn't just "same metric" — it's "same
+  population, computed the same way, with the same information available at the same
+  point in time." Two different, individually-defensible mistakes were available here
+  (reuse a number from a different population, or recompute correctly-scoped but with
+  a fresh cold-start bug) and neither is obviously wrong until you think through what
+  each rule actually needs to see. Getting this right on the first attempt, by tracing
+  through what each rule depends on before writing the comparison code, is the same
+  discipline as Phase 3's leakage tests — just applied to a cross-phase comparison
+  instead of a single feature.
+
+### The model's scores aren't calibrated probabilities — diagnosed, not just plotted
+- **What happened:** The calibration reliability check (brief's Step 5) shows a stark
+  gap: transactions with a mean predicted score of ~53% are actually laundering only
+  ~1.7% of the time. Across the whole test split, the mean predicted score is 7.31%
+  against an actual prevalence of 0.177% — the model's average score is about 41x the
+  true rate.
+- **Root cause:** The direct, well-understood consequence of `scale_pos_weight=1324.94`
+  (Phase 4) — the exact mechanism that lets the model rank rare positives above the
+  overwhelming negative class inflates predicted scores for anything resembling a
+  positive, and that inflation is what breaks calibration. It's the same knob doing two
+  things: enabling useful ranking, and destroying probability meaning, as a package
+  deal, not two separate problems.
+- **The fix:** Not implemented, and deliberately scoped as future work rather than
+  rushed in: Platt scaling or isotonic regression on the validation split would recover
+  a calibrated probability if one were ever needed (e.g. showing an analyst a literal
+  "X% chance of laundering" figure). Not needed for anything currently reported —
+  precision@k, recall-per-typology, and the headline false-positive-reduction number
+  all depend only on the model's *ranking*, which this distortion doesn't touch.
+- **Interview angle:** Knowing that a metric result doesn't invalidate a model — because
+  the thing that broke (calibration) isn't the thing the headline claims depend on
+  (ranking) — is more useful than either ignoring the bad calibration plot or panicking
+  about it. The brief asks for a calibration check specifically because "analysts triage
+  by score," and reporting a genuinely broken calibration plot alongside a clear
+  explanation of *why* it's broken and *why it doesn't matter for this project's actual
+  claims* is a stronger, more honest result than a falsely reassuring plot would have
+  been.
+
+### The system flags transactions, not accounts — worth being precise about
+- **The question:** `is_laundering` is a per-transaction label, and every metric in
+  this project (precision@k, recall-per-typology, the headline reduction) is computed
+  at transaction granularity. But nearly every feature driving those scores describes
+  *account*-level rolling history and network position (`sender_out_7d_count`,
+  `sender_graph_in_cycle`, ...), not the transaction's own standalone attributes. So
+  which is it — is this an account-risk system or a transaction-risk system?
+- **The answer:** Transaction-level classification, using account-level and
+  network-level context features. Each row scored is one transaction; what makes that
+  score meaningful is what the sender's and receiver's *recent history and network
+  position* look like as of that transaction's timestamp, not the transaction's own
+  amount and payment format alone (Feature 1-13 in `src/features.py`/
+  `src/graph_features.py`'s module docstrings are all either sender- or
+  receiver-account aggregates).
+- **Checked, not assumed:** whether this matters in practice depends on how
+  concentrated the alerts are on a small number of repeat accounts. At the headline
+  operating point, the model's 10,011 alerted transactions touch 13,783 distinct
+  accounts — 68.8% of the theoretical maximum (20,022, if every transaction's sender
+  and receiver were entirely unique). The rules baseline's 297,564 alerts touch
+  134,036 distinct accounts, and the 1,797 true laundering transactions in the test
+  split touch 2,199 distinct accounts. None of these show heavy concentration on a
+  small hub-account set — see `investigations/phase5_evaluation/
+  03_transaction_vs_account_level_alerts.py`.
+- **An honest gap this surfaces:** a real deployed system would very likely *bundle*
+  multiple flagged transactions from the same account into one case for an analyst to
+  review together, rather than handing over thousands of separate transaction-level
+  alerts one at a time. That bundling/case-management step isn't built here — noted as
+  a real scope gap, not something the headline 96.6% reduction number accounts for
+  (it measures alert *volume*, and bundling would reduce both the model's and the
+  baseline's effective review counts somewhat, though not necessarily by the same
+  factor for each).
+- **Interview angle:** "What's the unit of prediction, and does it match the unit a
+  human actually acts on?" is a question worth being able to answer precisely for any
+  ML system, not just this one — a fluent "yes we use account features" answer isn't
+  the same as being able to say exactly what gets scored, what an analyst would
+  actually review, and where the gap between the two currently sits.
+
+### A caught arithmetic error: "43x" should have been "7.3x"
+- **What happened:** While building the `investigations/` folder to make this
+  project's ad-hoc analysis scripts reproducible (rather than leaving them in a local
+  scratch directory), re-running the ACH-correlation investigation surfaced a
+  discrepancy: ACH's laundering rate (0.7462%) divided by the dataset's overall
+  prevalence (0.1019%) is **7.3x**, not the "~43x" figure already written into
+  `reports/results.md`, `reports/challenges.md`, `PLAN.md`, and
+  `portfolio/technical_overview.md` from Phase 4 — three of which were already merged
+  to `main`.
+- **Root cause:** A plain arithmetic slip made once, during Phase 4, that then
+  propagated by being copied into four separate documents rather than recomputed each
+  time — nothing caught it because nothing had re-derived the number from scratch
+  since. The direction of the finding (ACH is heavily overrepresented in laundering
+  transactions) was never in question; only the specific multiplier was wrong.
+- **The fix:** Recomputed directly (4483 ACH-format laundering transactions / 600,797
+  ACH-format transactions = 0.7462%; 5,177 / 5,078,345 overall = 0.1019%; ratio =
+  7.32x) and corrected all four documents plus this investigation script's own
+  docstring, which had been written with the same wrong figure before being checked
+  against a live run.
+- **Interview angle:** The catch itself is the point, not the mistake — a number that
+  sat unchallenged in four merged documents got caught specifically *because* the
+  investigation script was built to be re-run and re-verified, not just to reproduce a
+  plot once and be trusted forever. This is the same argument for why this whole
+  `investigations/` folder exists: a claim that was checked once and then copied
+  around is a liability, and a script that recomputes it from the raw data every time
+  it's run is what actually keeps a project's numbers honest over its lifetime.

@@ -112,13 +112,42 @@ glossing over them would undercut the project's credibility, not protect it:
   than swept aside. Knowing *why* an approach didn't work, specifically, is worth more
   than a lucky number that happens to look good.
 
-### Stage 5 onward — not built yet
-Measuring the model properly against the Stage 2 baseline (the headline "X% fewer
-alerts reviewed at the same catch rate" result), a plain-English explanation for every
-flagged alert (so an analyst — and a regulator — can see *why* it was flagged, not just
-trust a black box), a way to detect if the system's assumptions have gone stale over
-time, and a live, click-through demo. These will be added to this document as they're
-completed — see `PLAN.md` for the full build order.
+### Stage 5 — the headline result
+
+This is the number the whole project has been building toward. Measured properly, on
+transactions the system hadn't seen during training, against the Stage 2 rules-based
+status quo re-measured on that exact same set of transactions (not a different, easier
+comparison — the same population, so the two are actually comparable):
+
+**At the same catch rate as the existing rules-based approach (68.8% of real laundering
+cases caught), this system requires reviewing 96.6% fewer alerts to get there — 10,011
+alerts instead of 297,564, on the same set of transactions.** In practical terms: a
+compliance team using the existing rules-based approach on this population would need
+to review roughly 1 in 3 of every transaction that passes through the bank; using this
+system's ranking at the same catch rate, they'd review roughly 1 in 100 — without
+missing any more real cases than they already were.
+
+Breaking that catch rate down by the specific laundering pattern involved (structuring,
+fan-in, fan-out, cycles, and four other recognized schemes), no single pattern is
+dramatically weaker than the others — the system doesn't have an obvious blind spot
+where an entire category of laundering slips through disproportionately.
+
+One number worth being upfront about rather than glossing over: the system's internal
+confidence scores don't translate directly into "this transaction has a 70% chance of
+being laundering" — they're a reliable *ranking* (higher score genuinely means more
+suspicious, relative to other transactions), but not a literal probability, because of
+a design choice made to handle how rare real laundering is (see
+`portfolio/technical_overview.md` for the technical detail). This doesn't affect the
+headline result above, which is based entirely on ranking, but it would matter if a
+future version of this system ever displayed a literal percentage-chance figure to an
+analyst rather than a ranked queue.
+
+### Stage 6 onward — not built yet
+A plain-English explanation for every flagged alert (so an analyst — and a regulator —
+can see *why* it was flagged, not just trust a black box), a way to detect if the
+system's assumptions have gone stale over time, and a live, click-through demo. These
+will be added to this document as they're completed — see `PLAN.md` for the full build
+order.
 
 ## An honest caveat
 
@@ -132,6 +161,7 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-4 of 11 are complete (data validation, rules baseline, feature engineering,
-first trained model). Next: measuring the headline false-positive-reduction result
-against the Stage 2 baseline above, properly and per laundering pattern (Phase 5).
+Phases 0-5 of 11 are complete (data validation, rules baseline, feature engineering,
+first trained model, and the headline evaluation result above). Next: a plain-English
+explanation for every flagged alert, so an analyst doesn't have to trust a black box
+(Phase 6).

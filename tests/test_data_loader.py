@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.data_loader import load_accounts, load_patterns, load_transactions
+from src.data_loader import join_pattern_types, load_accounts, load_patterns, load_transactions
 
 VALID_TXN_HEADER = (
     "Timestamp,From Bank,Account,To Bank,Account,Amount Received,Receiving Currency,"
@@ -72,3 +72,55 @@ def test_load_patterns_parses_typology_blocks(tmp_path: Path):
     assert len(df) == 2
     assert set(df["pattern_type"]) == {"FAN-OUT", "CYCLE"}
     assert df["is_laundering"].eq(1).all()
+
+
+def test_join_pattern_types_matches_on_shared_fields(tmp_path: Path):
+    trans_csv = tmp_path / "trans.csv"
+    trans_csv.write_text(
+        VALID_TXN_HEADER
+        + "2022/09/01 00:06,21174,800737690,12,80011F990,2848.96,Euro,2848.96,Euro,ACH,1\n"
+        + VALID_TXN_ROW  # a legitimate transaction that must never match anything
+    )
+    txns = load_transactions(trans_csv)
+
+    patterns_txt = tmp_path / "patterns.txt"
+    patterns_txt.write_text(
+        "BEGIN LAUNDERING ATTEMPT - FAN-OUT:  Max 16-degree Fan-Out\n"
+        "2022/09/01 00:06,21174,800737690,12,80011F990,2848.96,Euro,2848.96,Euro,ACH,1\n"
+        "END LAUNDERING ATTEMPT - FAN-OUT\n"
+    )
+    patterns = load_patterns(patterns_txt)
+
+    result = join_pattern_types(txns, patterns)
+
+    assert len(result) == len(txns)
+    assert result.loc[0, "pattern_type"] == "FAN-OUT"
+    assert pd.isna(result.loc[1, "pattern_type"])  # the legitimate txn: no match
+
+
+def test_join_pattern_types_rejects_duplicate_pattern_keys(tmp_path: Path):
+    trans_csv = tmp_path / "trans.csv"
+    trans_csv.write_text(VALID_TXN_HEADER + VALID_TXN_ROW)
+    txns = load_transactions(trans_csv)
+
+    # Two identical pattern rows (same join key) tagged with different typologies --
+    # genuinely ambiguous, must raise rather than silently pick one.
+    patterns = pd.DataFrame(
+        {
+            "timestamp": [pd.Timestamp("2022-09-01 00:20")] * 2,
+            "from_bank": [10, 10],
+            "from_account": ["8000EBD30", "8000EBD30"],
+            "to_bank": [10, 10],
+            "to_account": ["8000EBD30", "8000EBD30"],
+            "amount_received": [100.00, 100.00],
+            "receiving_currency": ["US Dollar", "US Dollar"],
+            "amount_paid": [100.00, 100.00],
+            "payment_currency": ["US Dollar", "US Dollar"],
+            "payment_format": ["Cheque", "Cheque"],
+            "is_laundering": [0, 0],
+            "pattern_type": ["FAN-OUT", "CYCLE"],
+        }
+    )
+
+    with pytest.raises(ValueError, match="duplicate join keys"):
+        join_pattern_types(txns, patterns)

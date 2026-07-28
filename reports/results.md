@@ -78,7 +78,7 @@ false-positive-reduction-vs-the-Phase-2-baseline-at-equal-recall, calibration) i
 
 **Important caveat, investigated not just disclosed:** `payment_format_ACH` dominates
 feature importance. 86.6% of all laundering transactions in this dataset use ACH format,
-and ACH's laundering rate (0.75%) is ~43x the dataset's overall prevalence, while `Wire`
+and ACH's laundering rate (0.75%) is ~7.3x the dataset's overall prevalence, while `Wire`
 and `Reinvestment` have zero laundering transactions anywhere in the data. Retraining
 with every `payment_format_*` column dropped: PR-AUC falls from 0.3967 to **0.0705**,
 ROC-AUC from 0.9828 to **0.9160**, precision@100 from 92% to **62%**. So a substantial
@@ -102,3 +102,62 @@ dataset's actual maximum) — it's rediscovering the highest-throughput hub acco
 (log-transforming heavy-tailed features, or fitting on ratio/score features instead of
 raw counts) is noted as future work, not implemented in this phase. Full writeup in
 `reports/challenges.md`.
+
+## Phase 5 — Evaluation (the headline result)
+
+Command: `python -m src.evaluate` (also runnable as `notebooks/04_evaluation_explainability.ipynb`)
+
+**Methodology note:** every number here is computed on the model's held-out test split
+(1,015,669 transactions) — never train/val. The rules baseline used for comparison is
+**not** the Phase 2 full-dataset number; it's the same rules engine re-evaluated on
+exactly this test population (computed on the full dataset first, so structuring/
+pass-through rules keep their rolling-window historical context across the split
+boundary, then restricted to the test split's rows) — the correct apples-to-apples
+comparison, since the two systems must be judged on the same transactions.
+
+| | Rules baseline (test split) | XGBoost (test split, at matched recall) |
+|---|---|---|
+| Alerts raised | 297,564 | **10,011** |
+| Recall | 68.84% | 68.84% (matched) |
+
+### >>> HEADLINE: at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline. <<<
+
+(Test-split recall for the rules baseline is 68.8%, not the Phase 2 full-dataset
+figure of 60.6% — expected, not a discrepancy: the test split's own composition
+differs from the full dataset, per Phase 4's split table above, and this is the
+correct, population-matched baseline for this specific comparison.)
+
+**Recall per laundering typology**, at the same operating point behind the headline
+number:
+
+| Typology | Transactions | Caught | Recall |
+|---|---|---|---|
+| FAN-IN | 137 | 123 | 89.8% |
+| GATHER-SCATTER | 401 | 350 | 87.3% |
+| SCATTER-GATHER | 252 | 209 | 83.0% |
+| FAN-OUT | 140 | 113 | 80.7% |
+| RANDOM | 86 | 67 | 77.9% |
+| CYCLE | 109 | 84 | 77.1% |
+| STACK | 140 | 107 | 76.4% |
+| BIPARTITE | 74 | 50 | 67.6% |
+
+No typology falls dramatically below the others — even patterns without a dedicated
+graph feature (`BIPARTITE`, `STACK`, `RANDOM`) are caught at a broadly similar rate to
+`FAN-IN`/`CYCLE`, which the Phase 3 graph features specifically target.
+
+**Supporting metrics (test split):** PR-AUC 0.3967, ROC-AUC 0.9828 (reference only —
+see Phase 4's discussion of why), precision@100 92.0%, precision@500 74.8%,
+precision@1000 60.6%, precision@5000 20.7%.
+
+**Calibration — an important caveat, investigated not just noted:** the model's raw
+score is not a calibrated probability. Mean predicted score on the test split is
+7.31%, ~41x the actual test prevalence of 0.177%. This is the expected, direct
+consequence of `scale_pos_weight=1324.94` (Phase 4) — the same weighting that lets the
+model rank rare positives above the enormous negative class inflates scores for
+anything resembling a positive, at the cost of the raw output no longer meaning
+"probability." This does not undermine any number above: precision@k,
+recall-per-typology, and the headline reduction all depend only on the model's
+*ranking*, which this distortion doesn't change. It would matter if this project ever
+displayed a literal "X% chance of laundering" figure to an analyst — for that, a
+post-hoc calibration step (Platt scaling or isotonic regression on the validation
+split) is noted as future work, not implemented here.
