@@ -77,4 +77,9 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-5 are done (Phase 5 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result now exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Next step is Phase 6 (`src/explain.py`) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Phases 0-6 are done (Phase 6 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 6 added `src/explain.py` (SHAP + per-alert reason codes); two things from it are load-bearing for later phases:
+
+- **Never read `shap.TreeExplainer.expected_value`** — on shap 0.45.1 + xgboost 2.0.3 it returns `logit(base_score)` until the first `shap_values()` call, then is silently replaced with a different, correct value. Use `explain.shap_base_value`, which derives the intercept and asserts additivity. Don't "simplify" it back.
+- **Reason codes come in two variants** (`build_reason_code`'s `exclude_features`): faithful to raw SHAP, and behavioural with `PAYMENT_FORMAT_FEATURES` excluded from the *sentence only*. This exists because `payment_format_ACH` leads the faithful code on 99.86% of the alert queue, making it useless for triage. Phase 8's demo artifact should carry both; don't silently drop one.
+
+Next step is Phase 7 (`src/monitoring.py` — PSI/CSI drift checks) in `PLAN.md`, on a new feature branch per the Git workflow above.

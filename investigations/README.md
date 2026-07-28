@@ -52,3 +52,17 @@ venve/python.exe investigations/phase3_feature_engineering/01_groupby_vs_vectori
   behind the model's transaction-level alert set, since the model scores individual
   transactions using account-level features, not accounts directly — see the
   "transaction-level vs. account-level" entry in `reports/challenges.md`.
+
+**Phase 6 — explainability** (see `reports/challenges.md`'s Phase 6 section)
+- `01_shap_expected_value_lazy_initialisation.py` — reproduces the SHAP base-value trap
+  behind `src/explain.shap_base_value`: `TreeExplainer.expected_value` reports
+  `logit(base_score)` until the first `shap_values()` call, then is silently replaced
+  with the correct value. Needs no dataset (the behaviour is a property of the
+  shap/xgboost pairing, not of this project's data).
+- `02_reason_code_spot_check_vs_raw_values.py` — executes PLAN.md's Phase 6 check: for
+  the top-5 ranked alerts, asserts every generated clause round-trips to that row's raw
+  value in the modelling table, and confirms SHAP additivity on the real 53-feature
+  model.
+- `03_ach_dominance_in_reason_codes.py` — measures how often `payment_format_ACH` leads
+  the faithful reason code across the 10,011-alert queue (99.86%), and what the
+  behavioural variant surfaces instead.

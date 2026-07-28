@@ -196,6 +196,68 @@ pointed at "Phase 3" for this since Phase 1, but Phase 3 never actually needed o
 it. Verified against the previously-documented 62%/3,209-of-5,177 match rate before
 trusting it. Full writeups of all three findings above in `reports/challenges.md`.
 
+### Phase 6 — Explainability (`src/explain.py`)
+
+SHAP `TreeExplainer` over the XGBoost model, exposed three ways: global feature
+importance (mean |SHAP|), per-alert local contributions, and a plain-English **reason
+code** per alert. AML is regulated, so this isn't optional flavour — an analyst has to
+justify escalating a case and an auditor has to follow that justification afterwards.
+
+**Scope choice.** SHAP is computed over a bounded sample, not all 1,015,669 test rows:
+all test positives (at ~0.10% prevalence a uniform sample would contain almost none,
+leaving global importance describing only what the model thinks about legitimate
+traffic), plus the Phase 5 equal-recall alert queue, plus 20,000 seeded background
+negatives that make mean |SHAP| a population statistic rather than an alerts-only one.
+`TreeExplainer` is exact per row, so this is a runtime/memory bound, not an
+approximation.
+
+**Reason-code construction.** The top positive SHAP contributors are rendered against
+that row's own raw feature values via a per-family template map (`describe_feature`),
+e.g. `receiver_in_7d_distinct_counterparties = 11` → "the receiver received from 11
+distinct counterparties in the past 7 days". Three rules, each guarding a specific
+failure mode:
+- **Positive contributions only.** A negative SHAP value means the feature argued
+  *against* the alert; citing it as a reason would be actively misleading in a case note.
+- **Binary features render by direction**, so a zero-valued one-hot carrying positive
+  SHAP becomes "the payment was *not* made via X" rather than a clause implying the
+  opposite.
+- **Unknown feature names degrade to `name = value` instead of raising** — a degraded
+  reason code is recoverable in production; an exception in the explanation layer takes
+  down an otherwise healthy alert queue.
+
+**Faithfulness is asserted, not assumed.** `shap_base_value` derives SHAP's additive
+intercept as `margin - shap_values.sum(axis=1)` and raises if it isn't constant across
+rows, verifying the additivity identity the explanations depend on. It deliberately does
+*not* read `TreeExplainer.expected_value`, which on shap 0.45.1 + xgboost 2.0.3 returns
+`logit(base_score)` until the first `shap_values()` call and is then silently replaced
+with a different, correct value — a constant offset that produces plausible-looking but
+wrong reconstructions. Contributions themselves were verified bit-identical to XGBoost's
+native `pred_contribs`, so no reported number was ever affected; this was a latent trap
+fixed before Phase 8/9 could build a waterfall on the wrong intercept.
+
+**Groundedness is a test, not an eyeball check.** The risk with generated justifications
+isn't a crash, it's a fluent sentence quoting the wrong figure. So `describe_feature` is
+a pure, separately-tested value-to-words mapping, and
+`investigations/phase6_explainability/02_reason_code_spot_check_vs_raw_values.py` parses
+the number back out of each generated clause and asserts it round-trips to that row's
+value in the modelling table (also cross-checking against the Phase 3 feature table and
+the `payment_format` one-hot mapping).
+
+**The main finding, and the design response.** Phase 4's `payment_format_ACH` dominance
+shows up under SHAP too, and it degrades the explanation layer badly: across the
+10,011-alert queue, `payment_format_ACH` is the single largest positive contributor on
+**9,997 alerts (99.86%)**, with only 4 distinct features ever leading the sentence. A
+lead clause identical on ~99.9% of the queue carries no triage information however
+faithful it is. `build_reason_code` therefore takes `exclude_features`, and a second
+**behavioural** variant is produced with `PAYMENT_FORMAT_FEATURES` excluded from the
+sentence only — never from the model, so no metric changes. That variant spreads across
+11 distinct leading features (`receiver_in_7d_distinct_counterparties` 41.0%,
+`amount_paid_usd` 27.8%, `sender_graph_fan_in_score` 15.5%, `receiver_in_1d_count`
+12.5%), i.e. the Phase 3 account/window and graph features. Both variants are reported,
+because they answer different questions: what the model is actually doing versus what an
+analyst should look at. Full numbers in `reports/results.md`; writeups of all three
+findings in `reports/challenges.md`.
+
 ## Tech stack
 
 Python 3.12 · pandas / numpy · scikit-learn · xgboost / lightgbm · networkx · shap ·
@@ -204,7 +266,8 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-5 of 11 complete (Phase 5 in PR review as of this writing — see `PLAN.md`'s
-Progress section for the authoritative per-phase state). The project's headline result
-now exists (see above). Next: Phase 6 (`src/explain.py` — SHAP TreeExplainer, global
-feature importance, per-alert plain-English reason codes).
+Phases 0-6 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
+per-phase state. The project's headline result exists, and every alert now carries a
+grounded, plain-English reason code. Next: Phase 7 (`src/monitoring.py` — PSI/CSI drift
+checks on feature and score distributions across the dataset's time span), then the
+precomputed demo artifact and Streamlit app (Phases 8-10).

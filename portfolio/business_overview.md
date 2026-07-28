@@ -142,12 +142,47 @@ headline result above, which is based entirely on ranking, but it would matter i
 future version of this system ever displayed a literal percentage-chance figure to an
 analyst rather than a ranked queue.
 
-### Stage 6 onward — not built yet
-A plain-English explanation for every flagged alert (so an analyst — and a regulator —
-can see *why* it was flagged, not just trust a black box), a way to detect if the
-system's assumptions have gone stale over time, and a live, click-through demo. These
-will be added to this document as they're completed — see `PLAN.md` for the full build
-order.
+### Stage 6 — telling the analyst *why*, in plain English
+
+A ranked queue is only half of what a compliance analyst needs. The other half is a
+reason: money laundering is a regulated area, so an analyst has to be able to justify
+escalating a case, and an auditor has to be able to follow that justification months
+later. "The model scored it 0.97" is not a justification.
+
+So every alert now carries a sentence built from what actually drove its score — not a
+generic template, but that specific transaction's own numbers. For example:
+
+> *Flagged: the receiver received from 11 distinct counterparties in the past 7 days; a
+> $18,756 payment; the receiver received from 10 distinct accounts in the graph window.*
+
+Two things about this were treated as requirements rather than nice-to-haves:
+
+- **The sentence only cites evidence that argued *for* the alert.** Some characteristics
+  of a transaction make it look *more* legitimate; including those in a justification
+  would actively mislead the person reading it.
+- **Every claim in the sentence is checked against the transaction's real data,
+  automatically, every time the pipeline runs.** Generated text that reads fluently but
+  quotes the wrong figure is the genuine risk here — far more dangerous than an obvious
+  error, because nobody catches it. So "does each sentence state the true numbers for
+  this transaction?" is an automated test, not something spot-checked once by eye.
+
+**A finding worth being upfront about.** When the system explains itself completely
+faithfully, it opens with the same reason on 99.9% of alerts: the payment method used
+(ACH — a common US bank transfer). That is genuinely what the model relies on most, and
+it reflects a real pattern in this dataset, where the overwhelming majority of known
+laundering used that one payment method. But a reason that is identical on virtually
+every alert tells an analyst nothing about which case to open first. Rather than hide
+that, the system produces **two** explanations per alert: the fully faithful one, and a
+"behavioural" one that sets the payment method aside and describes the *account
+behaviour* instead — how many counterparties, how much money, what the network structure
+around the account looks like. The second is what's useful for triage; the first is what
+keeps the system honest about what it's actually doing. Both are reported, and the gap
+between them is documented rather than smoothed over.
+
+### Stage 7 onward — not built yet
+A way to detect if the system's assumptions have gone stale over time, and a live,
+click-through demo. These will be added to this document as they're completed — see
+`PLAN.md` for the full build order.
 
 ## An honest caveat
 
@@ -161,7 +196,8 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-5 of 11 are complete (data validation, rules baseline, feature engineering,
-first trained model, and the headline evaluation result above). Next: a plain-English
-explanation for every flagged alert, so an analyst doesn't have to trust a black box
-(Phase 6).
+Phases 0-6 of 11 are complete (data validation, rules baseline, feature engineering,
+first trained model, the headline evaluation result above, and a plain-English
+justification attached to every alert). Next: checking whether the system's assumptions
+drift as behaviour changes over time (Phase 7), then the bundled demo data and the live,
+click-through dashboard (Phases 8-10).
