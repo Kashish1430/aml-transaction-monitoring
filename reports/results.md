@@ -161,3 +161,102 @@ recall-per-typology, and the headline reduction all depend only on the model's
 displayed a literal "X% chance of laundering" figure to an analyst — for that, a
 post-hoc calibration step (Platt scaling or isotonic regression on the validation
 split) is noted as future work, not implemented here.
+
+## Phase 6 — Explainability (SHAP reason codes)
+
+Source: `notebooks/04_evaluation_explainability.ipynb` sections 7.x (the authoritative
+run for the numbers below). `python -m src.explain` is a lighter-weight check of the same
+code path; it samples the top-5,000 alerts instead of the Phase 5 equal-recall queue
+(which would require re-running the rules baseline over the full dataset), so its mean
+|SHAP| magnitudes differ slightly from the table below while the ranking is unchanged.
+
+**Explanation sample: 30,571 rows.** All 1,797 test positives (at 0.177% test prevalence
+a uniform sample would contain almost none, leaving global importance describing only
+legitimate traffic) ∪ the 10,011-alert Phase 5 queue (1,237 of which are positives) +
+20,000 seeded background negatives. `TreeExplainer` is exact per row, so this bound is
+about runtime/memory, not approximation.
+
+**Faithfulness check.** Derived SHAP base value 0.123039; max
+`|base + sum(SHAP) − margin|` = **4.77e-06** across all 30,571 rows — the additivity
+identity holds, so the contributions correspond to what the model actually computed. The
+base value is derived (`shap_base_value`), never read from
+`shap.TreeExplainer.expected_value`; see the Phase 6 entry in `reports/challenges.md` for
+why that attribute is unsafe here.
+
+**Global feature importance (mean |SHAP|, top 10).** `mean_shap` is reported alongside to
+separate "matters and pushes toward laundering" from "matters and pushes away from it";
+it is negative for most features simply because the overwhelming majority of rows are
+legitimate — `payment_format_ACH` is the notable exception, positive on average.
+
+| Feature | mean \|SHAP\| | mean SHAP |
+|---|---|---|
+| payment_format_ACH | 1.8279 | +0.0776 |
+| amount_paid_usd | 0.5558 | −0.2396 |
+| sender_out_7d_distinct_counterparties | 0.4140 | −0.3043 |
+| receiver_in_7d_distinct_counterparties | 0.3714 | −0.0870 |
+| sender_out_1d_distinct_counterparties | 0.2261 | −0.1565 |
+| sender_out_1d_count | 0.2093 | −0.1609 |
+| sender_out_7d_count | 0.1786 | −0.1040 |
+| receiver_in_7d_count | 0.1738 | −0.1487 |
+| receiver_in_1d_count | 0.1691 | +0.0026 |
+| sender_out_7d_amount_usd | 0.1518 | −0.1181 |
+
+Figure: `reports/figures/06_shap_global_importance.png`.
+
+**Per-alert reason codes.** Built from the top positive SHAP contributors rendered against
+each row's own raw feature values. Only features that pushed the score *up* are cited — a
+negative contribution means the feature argued against the alert, and citing it as a
+reason would be misleading in a case note. Example, the top-ranked test alert (score
+0.9952, true positive):
+
+- *faithful:* "Flagged: the payment was made via ACH; the receiver received from 11
+  distinct counterparties in the past 7 days; a $18,756 payment."
+- *behavioural:* "Flagged: the receiver received from 11 distinct counterparties in the
+  past 7 days; a $18,756 payment; the receiver received from 10 distinct accounts in the
+  graph window."
+
+All five spot-checked alerts (the top-5 by score) are true positives, and every clause was
+verified against that row's raw feature values — programmatically, by parsing the number
+back out of the generated sentence and comparing it to the modelling table, in
+`investigations/phase6_explainability/02_reason_code_spot_check_vs_raw_values.py`.
+
+### The Phase 6 finding: a faithful reason code leads with the same clause 99.86% of the time
+
+Phase 4's `payment_format_ACH` dominance persists under SHAP (mean |SHAP| 1.83 vs. 0.56
+for the next feature). Measured over the 10,011-alert Phase 5 queue — the queue an analyst
+would actually be handed — `payment_format_ACH` is the single largest positive contributor
+on **9,997 of 10,011 alerts (99.86%)**, and only **4** distinct features ever lead the
+sentence. An opening clause identical on ~99.9% of the queue carries no triage
+information, however faithful it is to the model.
+
+Response: `build_reason_code` accepts `exclude_features`, and a second **behavioural**
+variant is produced with the payment-format one-hots excluded from the *sentence only* —
+never from the model, so no metric above changes. Leading feature across the same queue:
+
+| Leading feature | Faithful | Behavioural |
+|---|---|---|
+| payment_format_ACH | 9,997 (99.86%) | — |
+| receiver_in_7d_distinct_counterparties | 12 (0.12%) | 4,106 (41.01%) |
+| amount_paid_usd | — | 2,786 (27.83%) |
+| sender_graph_fan_in_score | — | 1,553 (15.51%) |
+| receiver_in_1d_count | — | 1,250 (12.49%) |
+| sender_out_7d_count | — | 151 (1.51%) |
+| receiver_in_7d_amount_usd | — | 139 (1.39%) |
+| other (5 features) | 2 (0.02%) | 26 (0.26%) |
+| **distinct leading features** | **4** | **11** |
+
+The behavioural variant surfaces the Phase 3 account/window and graph features —
+including `sender_graph_fan_in_score`, the network structure this project exists to
+exploit — rather than a payment-method constant.
+
+**A precision worth keeping:** it would overstate the case to call the faithful variant
+information-free. Its second and third clauses still vary, so it produces 7,098 distinct
+sentences across the 10,011-alert queue (behavioural: 8,844; most-repeated sentence 290
+vs. 104). The defensible claim is the narrower one: its *leading* clause, the part read
+first, is the same on ~99.9% of alerts.
+
+Both variants are reported rather than picking one, because they answer different
+questions — *what is the model actually doing* (faithful) versus *what should an analyst
+look at on this case* (behavioural). Reproduced by
+`investigations/phase6_explainability/03_ach_dominance_in_reason_codes.py`; full writeups
+of all three Phase 6 findings in `reports/challenges.md`.

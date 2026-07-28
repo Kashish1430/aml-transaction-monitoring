@@ -491,3 +491,134 @@ small hand-built test cases to represent full-scale behaviour.
   `investigations/` folder exists: a claim that was checked once and then copied
   around is a liability, and a script that recomputes it from the raw data every time
   it's run is what actually keeps a project's numbers honest over its lifetime.
+
+---
+
+## Phase 6 — Explainability
+
+### SHAP's `expected_value` is silently wrong until you've already used the explainer
+- **What happened:** The first faithfulness test written for `src/explain.py` asserted
+  SHAP's additivity identity — `expected_value + sum(contributions)` must reconstruct
+  the model's raw margin output — and it failed on *every* row, by a constant 0.0354 in
+  log-odds. A constant offset across all rows rules out the obvious suspects (a
+  misaligned feature matrix, a wrong column order, or a class-index mix-up would all
+  produce row-varying errors), which pointed at the base value rather than the
+  contributions.
+- **Root cause:** On shap 0.45.1 + xgboost 2.0.3,
+  `shap.TreeExplainer(model).expected_value` returns `array([logit(base_score)])`
+  immediately after construction, and is **silently replaced** with a different, correct
+  scalar during the first `shap_values()` call. The test read the attribute before
+  explaining anything — the natural reading order — and so got the stale value. Verified
+  precisely: pre-call it equals `logit(base_score)` to within floating point, post-call
+  it equals the bias column of XGBoost's own `pred_contribs`, and only the post-call
+  value satisfies additivity (max reconstruction error 1.9e-06 vs. 1.7e-02). Nothing
+  warns, nothing raises, and the two values are close enough that a plotted waterfall
+  would look entirely reasonable.
+- **The fix:** Stop reading the attribute. `src/explain.shap_base_value` derives the
+  base value as `margin - shap_values.sum(axis=1)`, which is immune to call ordering,
+  and asserts the implied bias is constant across rows (raising if not) — so it verifies
+  the property the code actually depends on instead of trusting a library attribute to
+  mean what its name says. `tests/test_explain.py` pins the trap itself as a regression
+  test, so a future shap/xgboost upgrade that changes this behaviour surfaces there
+  rather than quietly shifting every reconstructed margin.
+- **Scope, stated honestly:** no reported number was ever affected. Reason codes use
+  only per-feature contributions and their ranking, and those were exact all along —
+  verified bit-identical (max difference 0.00e+00) to XGBoost's native `pred_contribs`.
+  This was a latent trap fixed before Phase 8/9 could build a SHAP waterfall or score
+  decomposition on top of the wrong intercept, not a bug in any result.
+- **Reproduction:**
+  `investigations/phase6_explainability/01_shap_expected_value_lazy_initialisation.py`.
+- **Interview angle:** The useful part is the diagnostic step, not the library quirk. A
+  *constant* error and a *row-varying* error have different causes, and reading that
+  distinction off the failure narrowed a 53-feature pipeline down to one scalar
+  immediately. It's also an argument for testing the property rather than the plumbing:
+  the additivity assertion existed only because "is this explanation faithful?" was
+  written as an executable check, and that check is the sole reason a silent,
+  plausible-looking offset was caught at all.
+
+### A reason code faithful to SHAP leads with the same clause on 99.86% of alerts
+- **What happened:** Phase 4 had already established that `payment_format_ACH` dominates
+  this model's feature importance (86.6% of labelled laundering in HI-Small uses ACH, a
+  laundering rate ~7.3x the dataset's overall prevalence). Under SHAP it dominates too,
+  with mean |SHAP| of 1.75 versus 0.60 for the next feature. The Phase 6 question is
+  what that does to the explanation layer specifically — and measured over the Phase 5
+  alert queue (the 10,011 alerts at the equal-recall operating point, i.e. the queue an
+  analyst would actually be handed), `payment_format_ACH` is the single largest positive
+  contributor on **9,997 of 10,011 alerts (99.86%)**. Only 4 distinct features ever lead
+  the sentence across the entire queue.
+- **Why that's a real problem and not just an aesthetic one:** the reason code exists so
+  an analyst can decide which case to open first. An opening clause identical on 99.86%
+  of the queue carries essentially no discriminative information, however faithful it is
+  to the model. "Flagged: the payment was made via ACH" is true, is what the model
+  actually keyed on, and is useless for triage.
+- **Root cause:** Not a bug in the explanation layer — it correctly reports a real
+  property of the model, which in turn reflects a property of the dataset (and quite
+  possibly of its synthetic generator, as Phase 4 already flagged). The mistake would
+  have been to ship a single reason code and let this go unnoticed, or to quietly drop
+  the feature to make the output look better.
+- **The fix, and what was deliberately *not* done:** `build_reason_code` takes an
+  `exclude_features` argument, and `PAYMENT_FORMAT_FEATURES` is passed to produce a
+  second, **behavioural** variant alongside the faithful one. The exclusion applies to
+  the *sentence only* — the payment-format one-hots remain in the model, so no reported
+  metric changes and nothing is hidden. Both variants are reported because they answer
+  different questions: *what is the model actually doing* (faithful) versus *what should
+  an analyst look at on this case* (behavioural). The behavioural variant spreads across
+  11 distinct leading features — `receiver_in_7d_distinct_counterparties` (41.0%),
+  `amount_paid_usd` (27.8%), `sender_graph_fan_in_score` (15.5%),
+  `receiver_in_1d_count` (12.5%) — i.e. the Phase 3 account/window and graph features
+  this project exists to exploit.
+- **A precision worth keeping:** it would be an overstatement to call the faithful
+  variant information-free. Its second and third clauses still vary, so it produces
+  7,098 distinct sentences across the 10,011-alert queue (behavioural: 8,844). The
+  defensible claim is narrower, and is the one made in `results.md`: its *leading*
+  clause, the part read first, is the same on ~99.9% of alerts.
+- **Reproduction:**
+  `investigations/phase6_explainability/03_ach_dominance_in_reason_codes.py`.
+- **Interview angle:** This is the difference between "I generated SHAP explanations" and
+  "I checked whether the explanations were usable." A global-importance bar chart shows
+  ACH on top and looks like a finished result; only measuring the *distribution of
+  leading contributors across the alert queue* reveals that the per-alert output had
+  collapsed to a near-constant. It also lands on the right side of a real trade-off:
+  faithfulness to the model and usefulness to the analyst are in tension here, and the
+  honest resolution is to show both and disclose the gap, not to pick whichever presents
+  better.
+
+### Grounding a generated sentence is a testable property, so it gets tested
+- **The question:** A reason code is generated text presented to an analyst as
+  justification for escalating a case. The failure mode that matters is not a crash —
+  it's a *fluent, confident sentence that misstates the transaction*: a clause paired
+  with a different row's value, a sender/receiver mix-up, an off-by-one in the SHAP row
+  alignment. Each produces output that reads perfectly and is false, and eyeballing five
+  examples does not reliably catch any of them.
+- **The answer:** Groundedness was made a checkable property rather than a matter of
+  inspection. `describe_feature` is a pure, separately-testable value-to-words mapping,
+  so `tests/test_explain.py` pins each feature family's rendering against a known raw
+  value. On real data,
+  `investigations/phase6_explainability/02_reason_code_spot_check_vs_raw_values.py`
+  parses the number back out of each generated clause and asserts it round-trips to that
+  row's value in the modelling table, then independently cross-checks the row against the
+  Phase 3 feature table (agreement to a relative 2-6e-08, i.e. float32 epsilon —
+  `prepare_feature_matrix` downcasts, so absolute gaps reach 1.45 on a $63M value and are
+  precision artifacts, not mismatches) and confirms the `payment_format` string maps to
+  the one-hot column that is actually set.
+- **A check that was initially fake, and had to be fixed:** the first version of that
+  script "verified" each clause by comparing `describe_feature(f, v)` to
+  `describe_feature(f, v)` — a tautology that would pass no matter how wrong the wiring
+  was. Worth recording precisely because it's the characteristic way a verification
+  script fails: it ran, printed reassuring `OK` lines, and checked nothing. The real
+  check parses the rendered sentence and compares the extracted number to the raw value,
+  with tolerances matching each family's formatting (0.5 for whole-unit counts and USD,
+  0.005 for the two-decimal ratio features) and direction-based checks for the binary
+  features that render no number at all.
+- **Two rules that came out of the same concern:** only features with *positive* SHAP are
+  ever cited, since a negative contribution means the feature argued against the alert
+  and citing it as a reason would be actively misleading; and binary features are
+  rendered by direction, so a zero-valued one-hot carrying positive SHAP renders as "the
+  payment was **not** made via X" rather than a clause implying the opposite. An unknown
+  feature name degrades to `name = value` instead of raising — a degraded reason code is
+  recoverable in production, an exception in the explanation layer takes down an
+  otherwise healthy alert queue.
+- **Why it matters:** the reason code is the part of this system a regulator or auditor
+  would actually read, and "trust me, I looked at a few" is not an answer for generated
+  text at scale. Making groundedness an assertion means "every clause states a checkable
+  fact about this transaction" is verified on every run rather than asserted once.
