@@ -66,3 +66,16 @@ venve/python.exe investigations/phase3_feature_engineering/01_groupby_vs_vectori
 - `03_ach_dominance_in_reason_codes.py` — measures how often `payment_format_ACH` leads
   the faithful reason code across the 10,011-alert queue (99.86%), and what the
   behavioural variant surfaces instead.
+
+**Phase 7 — monitoring** (see `reports/challenges.md`'s Phase 7 section)
+- `01_window_warmup_vs_real_drift.py` — separates rolling-window warm-up from real
+  population drift in the CSI table, by checking whether *non-windowed* features move
+  the same way the windowed ones do (they don't: max CSI 0.0669 vs. 3.0752). Also
+  surfaces the one genuine non-windowed drift, `payment_format_Reinvestment`, which
+  exists only on 2022-09-01.
+- `02_graph_lookback_eviction_step_change.py` — traces the 4x one-day step in score PSI
+  on 2022-09-09 to the 7-day graph lookback evicting the dataset's largest day for the
+  first time, asserting the lookback arithmetic rather than eyeballing the coincidence.
+- `03_tail_population_psi_cannot_see.py` — quantifies the 2022-09-11+ tail (PSI 10.40
+  aggregated, `insufficient_data` on every individual day) and re-derives the Phase 5
+  headline with the tail removed to confirm the result doesn't depend on it.

@@ -3,8 +3,11 @@ name: CI
 on:
   push:
     branches: [main, master]
+  # Deliberately unfiltered by base branch. Restricting this to [main, master] meant a
+  # stacked PR (one phase branch based on the previous one, opened while that one is
+  # still in review) got no checks at all, so the "wait for CI before merging" step in
+  # CLAUDE.md's git workflow silently had nothing to wait for.
   pull_request:
-    branches: [main, master]
 
 jobs:
   lint-and-test:

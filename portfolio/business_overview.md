@@ -179,10 +179,54 @@ around the account looks like. The second is what's useful for triage; the first
 keeps the system honest about what it's actually doing. Both are reported, and the gap
 between them is documented rather than smoothed over.
 
-### Stage 7 onward — not built yet
-A way to detect if the system's assumptions have gone stale over time, and a live,
-click-through demo. These will be added to this document as they're completed — see
-`PLAN.md` for the full build order.
+### Stage 7 — noticing when the world stops matching the model
+
+A model that was right in September is not automatically right in December. Customer
+behaviour shifts, a bank launches a new payment product, a data feed breaks. The
+uncomfortable part in AML specifically is that you **cannot wait to be told**: confirmed
+laundering outcomes arrive weeks to months later, so if you wait for results to prove the
+model degraded, you have already spent a quarter making bad decisions.
+
+So this stage added an early-warning layer that watches the *shape of the data* rather
+than the results. Every day, it asks: do the transactions coming in still look like the
+ones the model learned from? It needs no outcomes, so it can raise a hand immediately.
+
+The genuinely useful finding here is a cautionary one, and it is the reason this stage
+earns its place rather than just producing a green dashboard. **The alarm fired, loudly,
+and almost all of it was our own doing.** The system flagged a large, sudden shift on one
+specific day. Investigating it properly rather than accepting it showed the data had not
+changed at all — the model's own feature-building step had reached a scheduled point where
+it starts "forgetting" transactions older than a week, and the day it first forgot happened
+to be the busiest day in the dataset. Similarly, most of the flagged "changes" in
+individual data points turned out to be measurements that were still warming up, because
+some of them summarise a 30-day history in a dataset that only spans 18 days.
+
+Three lessons that transfer directly to a real deployment:
+
+- **A drift alarm watches the model's inputs, not the world.** Anything scheduled inside
+  the data pipeline looks exactly like a genuine change in customer behaviour. Whoever
+  reads the alerts has to know the pipeline's own calendar, or they will chase incidents
+  that do not exist.
+- **A monitor that misses something is more dangerous than one that over-fires**, because
+  it reports reassurance and reassurance gets acted on. A real defect was found and fixed
+  here: the first version was mathematically incapable of noticing a simple yes/no field
+  changing, and it was silently reporting "all stable" for the single most influential
+  input in the entire model. It now catches it.
+- **Not every problem is a statistics problem.** The one unambiguous, dramatic change in
+  this dataset — the last several days look nothing like the rest — is one the statistical
+  monitor structurally cannot see, because those days contain too few transactions to
+  measure anything reliably. The right answer is not a cleverer statistic; it is to also
+  watch something trivially simple, like how many transactions arrived today.
+
+This stage also produced a **direct stress-test of the headline result**. Since that
+unusual tail of the data sits inside the period the model was scored on, the headline was
+recalculated with it removed entirely. The 96.6% reduction becomes 96.2% — the result does
+not depend on it. That check was run because a sceptical reviewer would rightly ask, and
+the answer should be a number rather than a reassurance.
+
+### Stage 8 onward — not built yet
+The bundled demo data and a live, click-through dashboard. These will be added to this
+document as they're completed — see `PLAN.md` for the full build order.
 
 ## An honest caveat
 
@@ -196,8 +240,7 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-6 of 11 are complete (data validation, rules baseline, feature engineering,
-first trained model, the headline evaluation result above, and a plain-English
-justification attached to every alert). Next: checking whether the system's assumptions
-drift as behaviour changes over time (Phase 7), then the bundled demo data and the live,
-click-through dashboard (Phases 8-10).
+Phases 0-7 of 11 are complete (data validation, rules baseline, feature engineering,
+first trained model, the headline evaluation result above, a plain-English justification
+attached to every alert, and the early-warning drift layer described in Stage 7). Next:
+the bundled demo data and the live, click-through dashboard (Phases 8-10).
