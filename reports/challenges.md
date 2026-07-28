@@ -780,3 +780,105 @@ Worth stating plainly because "the model looks good because a third of the posit
 in a trivially-separable tail" is exactly the objection a sharp reviewer would raise, and
 the answer is a number rather than a defence.
 (`investigations/phase7_monitoring/03_tail_population_psi_cannot_see.py`.)
+
+---
+
+## Phase 8 — Demo artifact
+
+### Shipping a *sample* to the app without letting it misrepresent the result
+
+- **The question:** The deployed app can't hold the test split — 1,015,669 rows with 108
+  feature/SHAP columns is far past Streamlit Community Cloud's ~1GB. So it gets a sample.
+  But the project's entire claim is about an alert queue and a ranking, and a sample of a
+  ranking is not a ranking. What exactly can be sampled without the deployed demo quietly
+  saying something the pipeline never said?
+- **The answer:** Separate the two things a sample can damage, and protect them
+  differently.
+  1. **Rank identity.** Compute scores, ranks and the equal-recall queue over the
+     *complete* test split first, then sample rows. The shipped `rank` column is a true
+     rank out of 1,015,669 (recorded as `ranks_are_out_of` in the metrics JSON). Had the
+     sample been drawn first and ranked after, "rank 1" in the app would have meant
+     "best of the 30,000 rows that survived sampling" — a claim nobody made, displayed
+     as if the model made it.
+  2. **Queue completeness.** The 10,011-alert queue *is* the headline result, so it ships
+     whole and unsampled. Only negatives outside it are sampled, stratified across score
+     deciles (a flat draw from this skew returns almost nothing above the threshold, and
+     the app's "browse below the cut-off" view would have had no rows).
+
+  Both are asserted in CI against the committed artifact, not just intended: the queue
+  must be exactly ranks 1..N with no holes, and score must be monotone in rank.
+- **Why it matters:** "We had to subsample for the demo" is a sentence that hides a range
+  of sins, from harmless to disqualifying. The distinction between *sampling which rows
+  you display* and *sampling before you compute the thing you're claiming* is the whole
+  question, and being able to say which one you did — and point at a test that enforces
+  it — is the difference between a demo and a misrepresentation.
+
+### The tail had to be over-represented, so it got flagged instead of fixed
+
+- **The question:** Phase 7 established that the 2022-09-11+ tail is a different
+  population holding 36.4% of test positives in 0.109% of test rows. The demo sample keeps
+  every positive (at 0.18% prevalence, a uniform 30,000-row draw would contain ~53
+  laundering transactions — too few to show 8 typologies or let anyone click through real
+  examples). Keeping every positive therefore drags the tail in at **3.097%** of the
+  artifact versus **0.109%** of the real test split, roughly 28x its true weight.
+- **The answer:** Don't correct it. Any reweighting that fixed the tail's share would have
+  to drop positives or drop queue rows, damaging the two things the previous entry exists
+  to protect. Instead: flag it per row (`is_tail_population`), record *both* shares in the
+  metrics JSON, and re-derive the headline without the tail in the same run (96.2% vs.
+  96.6%) so the artifact carries its own robustness check. A CI test asserts the sampled
+  share exceeds the true share — i.e. it pins the direction of the distortion so it can't
+  silently flip without someone noticing.
+- **Why it matters:** The instinct is to make the sample look representative. But a sample
+  built for *demonstrating a ranked queue* has different requirements than one built for
+  estimating a population statistic, and quietly reweighting to look unbiased would have
+  broken the former to fake the latter. Measuring and disclosing the distortion is both
+  more honest and more useful than removing it.
+
+### The behavioural reason code diverges only where the model is alerting
+
+- **What broke:** A test asserting the faithful and behavioural reason-code variants
+  differ on >90% of the artifact failed at **55.67%**. Phase 6 had measured that
+  `payment_format_ACH` leads the faithful code on 99.86% of the alert queue, so ~99%
+  divergence seemed like the obvious expectation.
+- **Root cause:** The expectation was wrong; the artifact was right. Splitting divergence
+  by queue membership shows **99.87% inside the queue** (independently reproducing Phase
+  6's 99.86% on a differently constructed sample) and **33.53% outside** it. The alert
+  queue is 99.9% ACH; the off-queue sample is 40.4% Cheque, 27.9% Credit Card and only
+  14.8% ACH. For a non-ACH transaction the `payment_format_ACH` one-hot is 0 and its SHAP
+  contribution is *negative* — mean −1.52 versus +2.25 on ACH rows, negative on 99.8% of
+  non-ACH rows — meaning it argues against the alert. `top_contributors` is positive-only
+  by design (Phase 6: a feature that argued against the alert is not a reason for it), so
+  the one-hot never enters the sentence and excluding it changes nothing. 100% of the rows
+  where the two variants are identical are non-ACH.
+- **The fix:** Assert the property that's actually true and actually matters — >99%
+  divergence *on the alert queue* — rather than a whole-artifact threshold that would have
+  silently encoded the sampling mix into a test. Written up with the numbers in
+  `investigations/phase8_demo_artifact/01_reason_code_divergence_is_queue_specific.py`.
+- **Why it's a good interview story:** The failing test was the useful event, but not
+  because it found a bug — there wasn't one. It found an assumption that had been carried
+  forward from Phase 6 without noticing it was conditional on the alert queue. The
+  temptation with a "close enough" failure like 56% vs. 90% is to relax the threshold
+  until it passes; the right move was to work out which population the original 99.86%
+  described and re-scope the assertion to it.
+
+### `np.int64` does not survive `json.dump(default=str)` — it becomes a string
+
+- **What broke:** Nothing, in the end — it was caught before the second full build run,
+  but it's a trap worth recording because it fails *silently*. The metrics JSON is written
+  with `json.dump(..., default=str)`, and DataFrame records went in via `to_dict`.
+- **Root cause:** `np.float64` subclasses Python `float` and serialises as a number, so
+  most of the file looked fine. `np.int64` does **not** subclass `int`, so it falls
+  through to `default=str` and serialises as `"137"` — a quoted string. Every count in
+  `recall_per_typology` would have reached the app as a string, with nothing raising
+  anywhere; the failure would have surfaced as odd sorting or string concatenation in a
+  chart, far from its cause. Separately, `NaN` from the thin PSI slices would have been
+  written as the bare token `NaN`, which Python accepts and `JSON.parse` rejects.
+- **The fix:** A single `records()` helper routing every DataFrame through pandas'
+  `to_json` (which emits real JSON numbers and `null`), plus two tests: one asserting
+  typology counts come back as `int` and not `str`, one asserting the file contains no
+  `NaN` token.
+- **Why it's a good interview story:** `default=str` is the standard "just make it
+  serialise" reflex, and it converts a loud `TypeError` into silent data corruption in a
+  file that crosses a process boundary. The general lesson is that a serialisation
+  fallback whose job is to prevent crashes will, by construction, also prevent you from
+  finding out that something was unserialisable.

@@ -31,7 +31,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - All paths, seeds, window sizes, and thresholds live in `config.yaml` — no hardcoded magic numbers scattered in scripts.
 - Everything seeded and deterministic.
 - `data/`, `models/` are gitignored (large/binary/regenerable). The only bundled data artifact committed to the repo is the small precomputed `app/data/demo_alerts.parquet` used by the live demo (target <20MB — see Phase 8 in `PLAN.md`).
-- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 104 tests as of Phase 7.
+- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 123 tests as of Phase 8.
 - Commit per phase (see `PLAN.md`) with a clear message describing what became runnable.
 
 ## Environment
@@ -81,7 +81,15 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-7 are done and merged to `main` (PRs #6, #7, #8 — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+Phases 0-8 are done (Phases 0-7 merged to `main` via PRs #6, #7, #8; Phase 8 on `phase-8-demo-artifact` — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+
+Phase 8 built `scripts/build_demo_artifact.py`, which writes the only two data files the deployed app reads: `app/data/demo_alerts.parquet` (15.3 MB, 30,000 rows x 126 cols) and `app/data/demo_metrics.json` (36 KB). Three things from it constrain Phase 9:
+
+- **Never re-rank the artifact.** It is a *sample* whose `rank`/`model_score` are true values computed over the complete 1,015,669-row test split before sampling. The app must sort by the shipped `rank`, and must treat row counts below the alert queue as sample counts, not population counts (only the 10,011-row queue and the 1,797 positives are complete). CI asserts the queue is exactly ranks 1..N with no holes.
+- **The waterfall is precomputed — don't add `shap` to `app/requirements.txt`.** Every row ships all 54 raw feature values as `feat_<name>` and their 54 SHAP contributions as `shap_<name>`. Base value is in the metrics JSON (0.123039, from `explain.shap_base_value`); base + contributions reconstruct the shipped score to 5.2e-07, asserted in CI. The `feat_`/`shap_` prefixes exist because `amount_paid_usd` is both a display field and a model feature — an unprefixed concat is a duplicate-column crash.
+- **`is_tail_population` is a filter, not a defect.** The Phase 7 tail is deliberately over-represented (3.097% of the artifact vs. 0.109% of the test split) because all positives are kept; both shares and the tail-excluded headline are in the metrics JSON. Expose it, don't silently include or drop it.
+
+Rebuilding the artifact takes one ~15-minute local run (`python -m scripts.build_demo_artifact`) and needs `data/processed/features.parquet`, `data/raw/`, and `models/` — none of which are in the repo. The committed artifact is therefore the only copy CI ever sees, which is why the integrity tests in `tests/test_build_demo_artifact.py` read the real file rather than a fixture.
 
 Phase 7 added `src/monitoring.py` (PSI/CSI drift). Four things from it are load-bearing:
 
@@ -95,4 +103,4 @@ Phase 6 added `src/explain.py` (SHAP + per-alert reason codes); two things from 
 - **Never read `shap.TreeExplainer.expected_value`** — on shap 0.45.1 + xgboost 2.0.3 it returns `logit(base_score)` until the first `shap_values()` call, then is silently replaced with a different, correct value. Use `explain.shap_base_value`, which derives the intercept and asserts additivity. Don't "simplify" it back.
 - **Reason codes come in two variants** (`build_reason_code`'s `exclude_features`): faithful to raw SHAP, and behavioural with `PAYMENT_FORMAT_FEATURES` excluded from the *sentence only*. This exists because `payment_format_ACH` leads the faithful code on 99.86% of the alert queue, making it useless for triage. Phase 8's demo artifact should carry both; don't silently drop one.
 
-Next step is Phase 8 (`scripts/build_demo_artifact.py` — currently a docstring stub) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Next step is Phase 9 (`app/streamlit_app.py` — currently a docstring stub) in `PLAN.md`, on a new feature branch per the Git workflow above.

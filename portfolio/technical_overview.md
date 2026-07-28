@@ -356,6 +356,73 @@ trivially — a row shuffle preserves the marginal distribution exactly, so its 
 construction, making it a valid *negative* control and a useless positive one. It is kept
 as the negative control and a genuinely perturbed slice is used as the positive one.
 
+### Phase 8 — Demo artifact (`scripts/build_demo_artifact.py`)
+
+One offline run produces the only two files the deployed app reads:
+`app/data/demo_alerts.parquet` (**15.3 MB**, 30,000 rows x 126 columns, target <20MB) and
+`app/data/demo_metrics.json` (36 KB). The app computes nothing — Streamlit Community
+Cloud's ~1 CPU / ~1GB RAM cannot hold the 728MB modelling table, let alone score it or run
+SHAP over it.
+
+The script recomputes every headline number from the pipeline rather than reading it out of
+`results.md`, and reproduces them exactly: 10,011 vs. 297,564 alerts at 68.8% matched
+recall (96.6%), 96.2% excluding the 2022-09-11+ tail, PR-AUC 0.3967, ROC-AUC 0.9828,
+precision@100 92%, and the same per-typology recall table as Phase 5.
+
+**Sampling: what a sample is and isn't allowed to change.** The artifact is 30,000 of
+1,015,669 test rows — every positive (1,797), the entire equal-recall alert queue (10,011,
+unsampled), and 19,429 negatives stratified across score deciles. The two properties that
+had to survive sampling are protected explicitly:
+
+- **Ranks are true ranks.** Scoring, ranking and queue selection all happen over the
+  complete test split *before* any row is dropped, so `rank == 1` means "highest-scored
+  transaction in the test split", not "best survivor of sampling". `ranks_are_out_of`
+  records the denominator.
+- **The queue has no holes.** It *is* the headline result, so it ships whole.
+
+Both are asserted in CI against the committed file: the queue must be exactly ranks
+1..10,011, and score must be monotone non-increasing in rank. Decile stratification
+(rather than a flat draw) exists because a uniform sample of a distribution this skewed
+returns almost nothing above the alert threshold, leaving the app's below-the-cutoff view
+empty.
+
+**The Phase 7 tail is over-represented on purpose.** Keeping every positive necessarily
+drags in the anomalous tail, which holds 36.4% of test positives in 0.109% of test rows —
+it lands at **3.097%** of the artifact, ~28x its true weight. Correcting it would require
+dropping positives or queue rows, i.e. breaking the two guarantees above. Instead each row
+carries `is_tail_population`, both shares are recorded in the metrics JSON, and the
+tail-excluded headline (96.2%) ships alongside the headline. A test pins the *direction* of
+the distortion so it cannot silently flip.
+
+**Precomputed SHAP, verified end-to-end.** All 54 raw feature values (`feat_*`) and their
+54 SHAP contributions (`shap_*`) ship per row, so the app draws a genuine waterfall with no
+`shap` dependency. The shipped base value (0.123039, from `explain.shap_base_value` — never
+`TreeExplainer.expected_value`, see Phase 6) plus the shipped contributions reconstruct the
+shipped `model_score` to **max abs error 5.2e-07** (float32 storage rounding), asserted in
+CI. An explanation that silently describes a different prediction than the one being ranked
+is this layer's worst failure mode, so it is a test rather than an assumption.
+
+The `feat_`/`shap_` prefixes are load-bearing, not cosmetic: `amount_paid_usd` is both a
+display field and a model feature, so an unprefixed concat is a duplicate-column error —
+and a column lookup that hit whichever duplicate came first would have been worse.
+
+**A wrong assumption caught by a test.** An assertion that the two reason-code variants
+differ on >90% of the artifact failed at 55.67%. The artifact was right and the expectation
+was wrong: divergence is **99.87% inside the alert queue** (independently reproducing Phase
+6's 99.86% on a differently constructed sample) and 33.53% outside it. The queue is 99.9%
+ACH; off-queue rows are 40.4% Cheque and 27.9% Credit Card, and for a non-ACH transaction
+the `payment_format_ACH` one-hot carries a *negative* contribution (mean -1.52 vs. +2.25 on
+ACH rows, negative on 99.8% of non-ACH rows), so positive-only `top_contributors` drops it
+from both variants and they come out identical. The fix was to scope the assertion to the
+population Phase 6's figure actually described, not to relax the threshold until it passed.
+
+**Serialisation trap, caught before it shipped.** `json.dump(..., default=str)` silently
+turns `np.int64` into a quoted string (`np.float64` subclasses `float` and survives;
+`np.int64` does not subclass `int`), so every typology count would have reached the app as
+`"137"` with nothing raising. A single `records()` helper routes DataFrames through pandas'
+`to_json` — real JSON numbers, and `null` instead of the invalid bare `NaN` token that the
+thin PSI slices would otherwise have emitted.
+
 ## Tech stack
 
 Python 3.12 · pandas / numpy · scikit-learn · xgboost / lightgbm · networkx · shap ·
@@ -364,8 +431,10 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-7 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
+Phases 0-8 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
 per-phase state. The project's headline result exists, every alert carries a grounded,
-plain-English reason code, and the result is now known to survive removing the dataset's
-anomalous tail (96.2% vs. 96.6%). Next: the precomputed demo artifact and Streamlit app
-(Phases 8-10).
+plain-English reason code, the result is known to survive removing the dataset's anomalous
+tail (96.2% vs. 96.6%), and both artifacts the live app will read are built, verified and
+committed (15.3 MB parquet + 36 KB metrics JSON). 123 tests, including integrity checks
+that run against the committed artifact itself. Next: the Streamlit app and its deployment
+(Phases 9-10).
