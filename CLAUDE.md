@@ -77,9 +77,18 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-6 are done (Phase 6 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 6 added `src/explain.py` (SHAP + per-alert reason codes); two things from it are load-bearing for later phases:
+Phases 0-7 are done (Phases 6 and 7 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+
+Phase 7 added `src/monitoring.py` (PSI/CSI drift). Four things from it are load-bearing:
+
+- **The 2022-09-11+ tail is a different population** — daily volume collapses from 654,467 rows to 11, laundering rate goes from ~0.09% to 59.12%, payment format to 100% ACH. It sits inside the test split and holds 36.4% of its positives in 0.109% of its rows. Any test-split number should be sanity-checked against it (Phase 7 did: the headline moves 96.6% → 96.2% without it). Phase 8's demo artifact sampling should not accidentally over- or under-represent it.
+- **Never quantile-bin a binary feature for drift.** It collapses to one bin and reports PSI 0.0000 regardless of what happened — it did exactly that for `payment_format_ACH`, the model's top feature. `characteristic_stability` routes anything with ≤10 distinct reference values through `category_share_psi`; don't "simplify" that branch away.
+- **Drift on this dataset is mostly artifact, and the writeups say so.** The 09-09 score-PSI step is the 7-day graph lookback evicting HI-Small's largest day for the first time, not a data change; most feature CSI is 7/30-day windows still warming up on a 17-18 day dataset. Don't quote "23 of 54 features drifted significantly" without that context.
+- **`min_slice_size` (1,000) means the tail's daily slices are never scored** — reported as `insufficient_data`, deliberately. The fix is a volume monitor alongside PSI, not a lower floor.
+
+Phase 6 added `src/explain.py` (SHAP + per-alert reason codes); two things from it are load-bearing for later phases:
 
 - **Never read `shap.TreeExplainer.expected_value`** — on shap 0.45.1 + xgboost 2.0.3 it returns `logit(base_score)` until the first `shap_values()` call, then is silently replaced with a different, correct value. Use `explain.shap_base_value`, which derives the intercept and asserts additivity. Don't "simplify" it back.
 - **Reason codes come in two variants** (`build_reason_code`'s `exclude_features`): faithful to raw SHAP, and behavioural with `PAYMENT_FORMAT_FEATURES` excluded from the *sentence only*. This exists because `payment_format_ACH` leads the faithful code on 99.86% of the alert queue, making it useless for triage. Phase 8's demo artifact should carry both; don't silently drop one.
 
-Next step is Phase 7 (`src/monitoring.py` — PSI/CSI drift checks) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Next step is Phase 8 (`scripts/build_demo_artifact.py` — currently a docstring stub) in `PLAN.md`, on a new feature branch per the Git workflow above.

@@ -260,3 +260,121 @@ questions — *what is the model actually doing* (faithful) versus *what should 
 look at on this case* (behavioural). Reproduced by
 `investigations/phase6_explainability/03_ach_dominance_in_reason_codes.py`; full writeups
 of all three Phase 6 findings in `reports/challenges.md`.
+
+---
+
+## Phase 7 — Monitoring (PSI/CSI drift)
+
+Produced by `src/monitoring.py` (run as `python -m src.monitoring`), which also writes
+`reports/figures/07_score_psi_over_time.png`. Reference distribution throughout is the
+**training split**, never a neighbouring time slice: chained adjacent comparisons make
+gradual drift invisible, since each day looks like the day before it right up until the
+model is scoring a population it has never seen.
+
+Bands are the conventional credit-risk reading (<0.10 stable, 0.10–0.25 moderate, >0.25
+significant). They are convention, not theory, and are used because a model-risk reviewer
+expects them.
+
+### Score PSI
+
+| Comparison | PSI | Band |
+|---|---|---|
+| train → val | 0.0682 | stable |
+| train → test | 0.2433 | moderate |
+| train → test, excluding the 2022-09-11+ tail | 0.2442 | moderate |
+| train → the 2022-09-11+ tail alone (1,108 rows) | **10.4044** | significant |
+
+![Score PSI over time](figures/07_score_psi_over_time.png)
+
+| Day | Rows | PSI | Band |
+|---|---|---|---|
+| 2022-09-06 | 201,914 | 0.0707 | stable |
+| 2022-09-07 | 482,751 | 0.0685 | stable |
+| 2022-09-08 | 482,773 | 0.0783 | stable |
+| 2022-09-09 | 654,467 | 0.2845 | significant |
+| 2022-09-10 | 208,325 | 0.2856 | significant |
+| 2022-09-11 → 09-18 | 396 → 11 | — | insufficient_data |
+
+### The three findings, and what is real
+
+The headline Phase 7 result is that **most of what this monitor reports is not drift in
+the data**, and the one change that unambiguously is drift is the one the daily monitor
+structurally cannot see. All three are written up in `reports/challenges.md`'s Phase 7
+section with backing scripts in `investigations/phase7_monitoring/`.
+
+**1. The 09-09 step change is the model's own feature pipeline.** PSI is flat (~0.07) for
+three days and then steps ~4x in one day with no ramp. `graph_features.lookback_days` is
+7 and the dataset starts 2022-09-01, so 2022-09-09 is the first day the trailing graph
+window evicts anything — and what it evicts is 2022-09-01, HI-Small's single largest day
+(1,114,921 rows, 22.0% of the dataset). 8 of the top 10 CSI drivers across the step are
+`*_graph_*` features. The bottom score decile drains from 4.23% to 1.27% of the day's rows
+overnight. Nothing about the transactions changed.
+
+**2. Most feature-level CSI is rolling-window warm-up.** 23 of 54 features land in the
+significant band on train → test, led by `receiver_in_30d_count` at CSI 3.08 (mean 8.00 →
+25.55). But HI-Small spans ~17–18 days while `windows.rolling_days` includes 7 and 30, so
+a 30-day window is longer than the dataset and can only accumulate. The discriminating
+check is whether non-windowed features move the same way — they do not:
+
+| Feature group | stable | moderate | significant |
+|---|---|---|---|
+| windowed (`*_Nd_*`, `*_graph_*`) | 14 | 10 | 22 |
+| non-windowed | 7 | 0 | 1 |
+
+`amount_paid_usd`, the only continuous non-windowed feature, is stable at CSI 0.0669
+against a windowed maximum of 3.0752.
+
+**3. The one real non-windowed drift, and the one the monitor misses.** The single
+non-windowed feature in the significant band is genuine: `payment_format_Reinvestment`
+(CSI 1.9169) is 43.15% of transactions on 2022-09-01 and 0.00% on every day after — all
+481,056 Reinvestment transactions in HI-Small fall on the dataset's first calendar day.
+Separately, from 2022-09-11 onward the data becomes a different population entirely —
+daily volume collapses from 654,467 rows to 11, the laundering rate goes from ~0.09% to
+59.12%, and payment format becomes 100% ACH. Aggregated, its score PSI is 10.40. Every
+individual day of it is below `min_slice_size` and is correctly reported as
+`insufficient_data`, so the daily monitor never scores it.
+
+### Robustness: the headline result does not depend on the tail
+
+Because that tail sits inside the test split and holds 36.4% of its positives in 0.109%
+of its rows, the Phase 5 headline was re-derived without it, using the same
+`evaluate.py` machinery:
+
+| Population | Baseline alerts | Baseline recall | Model alerts | FP reduction |
+|---|---|---|---|---|
+| Full test split | 297,564 | 68.8% | 10,011 | **96.6%** |
+| Body only (< 2022-09-11) | 296,597 | 61.9% | 11,140 | **96.2%** |
+| Tail only (≥ 2022-09-11) | 967 | 80.9% | 765 | 20.9% |
+
+The headline survives: removing the tail entirely moves the reduction by 0.4 percentage
+points. The tail-only figure is low for a reason that is not a model failure — at ~59%
+prevalence there are barely any false positives left to remove, so the rules baseline is
+already close to right and there is almost no headroom.
+
+### A defect found and fixed in this module
+
+The first version of `characteristic_stability` quantile-binned every feature and
+therefore scored **0.0000** for `payment_format_Reinvestment` in the exact comparison
+where that format went from 15.8% of transactions to zero — and 0.0000 for
+`payment_format_ACH`, the model's single most important feature (Phase 4). Every quantile
+of a 0/1 column is the same value, so the edges collapse to one bin and the metric can no
+longer express anything. Features with at most `max_categorical_cardinality` (10) distinct
+reference values now route through `category_share_psi` instead, and the table reports
+which path each feature took. This moved three previously-invisible binary features into
+the significant band (20 → 23) and put `payment_format_Reinvestment` at rank 2.
+
+### Honest limitations
+
+- **The bands are convention.** 0.10/0.25 come from credit-scorecard practice, not from
+  anything derived on this data.
+- **`min_slice_size` trades a blind spot for noise, and both are real.** Lowering it would
+  score the tail but would also score 46-row slices where PSI is sampling noise. The right
+  production answer is a **volume monitor** beside the distribution monitor: daily row
+  count falling 654,467 → 11 needs no binning to detect.
+- **No labels are used anywhere in this phase**, deliberately — at ~0.10% prevalence with
+  SAR outcomes arriving weeks-to-months later, distribution monitoring is the only signal
+  available before labels exist. It detects that the input moved, never that performance
+  degraded.
+- **The `epsilon` floor bounds an emptied bin's contribution** rather than letting it go to
+  infinity, so an extreme PSI's magnitude is partly a function of that constant. It does
+  not change which band a value lands in at any plausible epsilon.

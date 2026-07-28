@@ -258,6 +258,104 @@ because they answer different questions: what the model is actually doing versus
 analyst should look at. Full numbers in `reports/results.md`; writeups of all three
 findings in `reports/challenges.md`.
 
+### Phase 7 — Monitoring (`src/monitoring.py`)
+
+PSI on the model's output score and CSI on every input feature, both against the
+**training split as a fixed reference** — never slice-to-neighbouring-slice, which makes
+gradual drift invisible (each day looks like the day before it right up until the model is
+scoring a population it has never seen). Bands are the conventional credit-risk reading
+(<0.10 stable, 0.10–0.25 moderate, >0.25 significant); they are convention, not theory,
+and are used because that is what a model-risk reviewer expects. No labels are used
+anywhere in this phase, deliberately: at ~0.10% prevalence with SAR outcomes arriving
+weeks-to-months later, distribution monitoring is the only signal that exists before
+labels do. It detects that the input moved, never that performance degraded.
+
+| Comparison | PSI | Band |
+|---|---|---|
+| train → val | 0.0682 | stable |
+| train → test | 0.2433 | moderate |
+| train → 2022-09-11+ tail alone (1,108 rows) | 10.4044 | significant |
+
+Three implementation choices are load-bearing rather than incidental. **Bin edges come
+from the reference only** — re-deriving quantiles per slice would make every slice look
+stable by construction, since deciles of any distribution hold 10% each. **Empty bins are
+floored at `epsilon`, not dropped** — a current slice can empty a bin the reference filled,
+sending `ln(0)` to `-inf`; dropping such bins would discard the largest real shifts, so the
+floor bounds the term at large-but-finite instead. **Duplicate quantile edges are collapsed**
+and `n_bins_effective` is reported, because most features here are counts that are zero for
+the majority of rows.
+
+**The phase's headline is a negative result: most of what the monitor reports is not drift
+in the data.** Establishing that took more work than producing the table.
+
+*The largest drift signal is self-inflicted.* Daily score PSI is flat (0.0707, 0.0685,
+0.0783) then steps ~4x to **0.2845** on 2022-09-09 with no ramp — and a step is a far more
+interesting shape than a slope. Cause: `graph_features.lookback_days` is 7 and HI-Small
+starts 2022-09-01, so 09-09 is the first day the trailing graph window evicts anything, and
+what it evicts is 09-01 — the dataset's single largest day (1,114,921 rows, 22.0%). 8 of
+the top 10 CSI drivers across the boundary are `*_graph_*`; the reference's bottom score
+decile drains from 4.23% to 1.27% of the day's rows overnight, contributing 0.180 of the
+0.285. Nothing about the transactions changed. The generalisable lesson: **a drift monitor
+watches the features, not the world**, so any scheduled transformation inside the feature
+pipeline is indistinguishable from a real population change.
+
+*Most feature-level CSI is rolling-window warm-up.* 23 of 54 features land in the
+significant band, led by `receiver_in_30d_count` at CSI 3.08 (mean 8.00 → 25.55). But
+`windows.rolling_days` includes 30 while the dataset spans ~17–18 days, so those counts can
+only accumulate. The discriminating check is whether non-windowed features move the same
+way — they don't:
+
+| Feature group | stable | moderate | significant |
+|---|---|---|---|
+| windowed (`*_Nd_*`, `*_graph_*`) | 14 | 10 | 22 |
+| non-windowed | 7 | 0 | 1 |
+
+`amount_paid_usd` is stable at CSI 0.0669 against a windowed maximum of 3.0752.
+
+*A defect in this module, found and fixed.* The first version quantile-binned everything
+and therefore reported CSI **0.0000** for `payment_format_Reinvestment` in the exact
+comparison where that format went from 15.8% of transactions to zero — and 0.0000 for
+`payment_format_ACH`, the model's most important feature. Every quantile of a 0/1 column is
+the same value, so the edges collapse to a single bin and the metric cannot express
+anything. Features with ≤ `max_categorical_cardinality` (10) distinct reference values now
+route through `category_share_psi`, comparing per-category shares over the union of
+reference and current categories; the `method` column records which path each feature took.
+This moved three previously-invisible binary features into the significant band (20 → 23).
+The failure mode is the dangerous direction — a monitor that misses drift reports
+*reassurance* — and the bug was invisible in every synthetic normal-distribution test,
+appearing only against the real one-hot columns.
+
+*The one unambiguous population change is the one the monitor can't see.* From 2022-09-11
+daily volume collapses (654,467 → 11 rows), the laundering rate goes from ~0.09% to 59.12%,
+and payment format becomes 100% ACH. Aggregated, that tail's PSI is **10.4044**; every
+individual day of it is below `min_slice_size` (1,000) and correctly reported as
+`insufficient_data` rather than scored on 46 rows of noise. Lowering the floor trades a
+blind spot for false alarms and fixes nothing. The right production answer is a **volume
+monitor** beside the distribution monitor: daily row count falling 654,467 → 11 needs no
+binning, no reference, and no minimum sample size.
+
+**Robustness check on the headline.** That tail sits inside the test split and holds 655 of
+its 1,797 positives — 36.4% of all test positives in 0.109% of its rows — which is a direct
+threat to the Phase 5 result. It was re-derived with the tail removed, using the same
+`evaluate.py` functions:
+
+| Population | Baseline alerts | Baseline recall | Model alerts | FP reduction |
+|---|---|---|---|---|
+| Full test split | 297,564 | 68.8% | 10,011 | **96.6%** |
+| Body only (< 2022-09-11) | 296,597 | 61.9% | 11,140 | **96.2%** |
+| Tail only (≥ 2022-09-11) | 967 | 80.9% | 765 | 20.9% |
+
+The headline moves 0.4 percentage points. The tail-only figure is low for a reason that
+isn't a model failure: at ~59% prevalence there are almost no false positives left to
+remove. Full numbers in `reports/results.md`, four writeups in `reports/challenges.md`,
+backing scripts in `investigations/phase7_monitoring/`.
+
+**One correction to the plan's own check.** PLAN.md specified "a deliberately shuffled
+'future' slice shows elevated PSI vs. a stable slice." Taken literally that passes
+trivially — a row shuffle preserves the marginal distribution exactly, so its PSI is ~0 by
+construction, making it a valid *negative* control and a useless positive one. It is kept
+as the negative control and a genuinely perturbed slice is used as the positive one.
+
 ## Tech stack
 
 Python 3.12 · pandas / numpy · scikit-learn · xgboost / lightgbm · networkx · shap ·
@@ -266,8 +364,8 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-6 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
-per-phase state. The project's headline result exists, and every alert now carries a
-grounded, plain-English reason code. Next: Phase 7 (`src/monitoring.py` — PSI/CSI drift
-checks on feature and score distributions across the dataset's time span), then the
-precomputed demo artifact and Streamlit app (Phases 8-10).
+Phases 0-7 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
+per-phase state. The project's headline result exists, every alert carries a grounded,
+plain-English reason code, and the result is now known to survive removing the dataset's
+anomalous tail (96.2% vs. 96.6%). Next: the precomputed demo artifact and Streamlit app
+(Phases 8-10).

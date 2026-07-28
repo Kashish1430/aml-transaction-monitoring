@@ -66,5 +66,14 @@ model:
 evaluation:
   precision_at_k: [100, 500, 1000, 5000]
 
+monitoring:
+  psi_bins: 10                       # quantile bins, derived from the REFERENCE split only
+  psi_epsilon: 1.0e-6                # proportion floor for empty bins — keeps ln(0) from going to -inf
+  psi_thresholds:                    # conventional credit-risk reading, not a derived result
+    moderate: 0.10
+    significant: 0.25
+  time_slice_freq: "D"               # HI-Small spans only ~17-18 days, so daily is the finest useful slice
+  min_slice_size: 1000               # below this, PSI is sampling noise rather than drift
+
 demo_artifact:
   target_rows: 30000                 # all positives + stratified negative sample, target <20MB parquet
