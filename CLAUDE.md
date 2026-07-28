@@ -31,7 +31,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - All paths, seeds, window sizes, and thresholds live in `config.yaml` — no hardcoded magic numbers scattered in scripts.
 - Everything seeded and deterministic.
 - `data/`, `models/` are gitignored (large/binary/regenerable). The only bundled data artifact committed to the repo is the small precomputed `app/data/demo_alerts.parquet` used by the live demo (target <20MB — see Phase 8 in `PLAN.md`).
-- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on every push.
+- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 104 tests as of Phase 7.
 - Commit per phase (see `PLAN.md`) with a clear message describing what became runnable.
 
 ## Environment
@@ -66,8 +66,12 @@ The deployed Streamlit app never runs feature engineering, model inference, or S
 - `required_approving_review_count` is `0` — a human approval is *not* required to merge (would deadlock a solo repo, since GitHub blocks self-approval). CI passing is the actual gate.
 - Force-pushes and branch deletion are disabled on `main`.
 
+CI (`.github/workflows/ci.yml`) runs on pushes to `main` and on **pull requests to any base branch** — the `pull_request` trigger is deliberately unfiltered (changed in Phase 7). It was previously restricted to `[main, master]`, which meant a PR based on anything other than `main` got no checks at all and the "wait for CI" step below had nothing to wait for.
+
+**Always branch from an up-to-date `main` and target `main`.** Do not open a phase PR against another phase's branch. This was tried once in Phase 7 and went wrong: PR #7 was opened against `phase-6-explainability` after PR #6 had *already* merged, so GitHub never re-targeted it (auto-retargeting only fires when the base PR merges while the stacked PR is open). Merging #7 wrote Phase 7 onto a dead branch instead of `main`, and it took a third PR (#8) to land it. If a previous phase's PR is still open and the next phase genuinely depends on it, wait for the merge rather than stacking.
+
 Practical loop for every phase (this is how Phases 2+ were actually done, follow the same shape):
-1. `git checkout -b phase-N-<short-name>` from an up-to-date `main`.
+1. `git checkout -b phase-N-<short-name>` from an up-to-date `main` (`git checkout main && git pull` first — verify the previous phase's PR is actually merged, don't assume).
 2. Implement, test locally (`pytest -v`, `ruff check .`) until clean.
 3. Commit, `git push -u origin phase-N-<short-name>`.
 4. `gh pr create` with a summary of what changed and the real numbers/results produced.
@@ -77,7 +81,7 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-7 are done (Phases 6 and 7 in PR review as of this writing — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+Phases 0-7 are done and merged to `main` (PRs #6, #7, #8 — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
 
 Phase 7 added `src/monitoring.py` (PSI/CSI drift). Four things from it are load-bearing:
 
