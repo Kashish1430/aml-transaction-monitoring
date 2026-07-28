@@ -882,3 +882,56 @@ the answer is a number rather than a defence.
   file that crosses a process boundary. The general lesson is that a serialisation
   fallback whose job is to prevent crashes will, by construction, also prevent you from
   finding out that something was unserialisable.
+
+---
+
+## Phase 9 — Streamlit app
+
+### The app imported itself in a way the real server can't
+
+- **What broke:** `app/streamlit_app.py` began with `from app import artifact`, which
+  worked perfectly under `pytest` and under `streamlit.testing.v1.AppTest`. It would have
+  raised `ModuleNotFoundError: No module named 'app'` the moment it was deployed.
+- **Root cause:** `streamlit run app/streamlit_app.py` puts the **script's own directory**
+  (`app/`) on `sys.path` — not the repo root. So `artifact` is importable as a top-level
+  module there, but the package path `app.artifact` is not. Every local check passed
+  because both `pytest` (`pythonpath = ["."]` in `pyproject.toml`) and AppTest run with the
+  repo root on the path, which is exactly the condition the deployed server does not
+  reproduce. The test suite could not have caught this, no matter how thorough, because
+  the suite itself creates the environment that hides it.
+- **The fix:** Insert the repo root into `sys.path` explicitly at the top of the app,
+  before the import, with a comment saying why. Verified by *emulating the deployment
+  path* — stripping the repo root from `sys.path`, inserting `app/`, and executing the
+  import prologue — rather than by reasoning about it.
+- **Why it's a good interview story:** This is the failure mode that green CI is worst at
+  catching: not a bug in the code, but a difference between the test harness's environment
+  and production's. The generalisable habit is that for anything environment-dependent,
+  the check has to *reconstruct the target environment*, because a passing test in the
+  wrong environment is evidence about the wrong thing. It was found by asking "what does
+  the real command actually put on the path?" before deploying, which cost a minute;
+  finding it from a Streamlit Cloud build log would have cost considerably more.
+
+### A slider that crashes whenever a filter matches too little
+
+- **What broke:** Emptying any sidebar filter — a one-click action — raised
+  `StreamlitAPIException: Slider min_value must be less than the max_value. The values were
+  10 and 10`, taking out the Alert Queue tab.
+- **Root cause:** The top-N slider was written as
+  `st.slider(min_value=10, max_value=max(10, min(2000, n_shown)))`. The `max(10, ...)`
+  was there to stop the maximum going below the minimum, and it does — by making them
+  *equal*, which `st.slider` also rejects. Any filter combination returning ≤10 rows hit
+  it, and there are many: an emptied multiselect, a nonsense account search, a high
+  minimum score.
+- **The fix:** Branch on the row count instead of clamping it — an empty view gets an
+  informational message, a view of ≤10 rows skips the slider and shows everything, and
+  only a view with a real range gets a slider. The first attempt at this used `st.stop()`
+  for the empty case, which was worse: `st.stop()` halts the entire script run, so an
+  empty *filter* would have blanked the Model Performance and About tabs, neither of which
+  depends on the filter. Replaced with plain nesting.
+- **Why it's a good interview story:** Two lessons in one small bug. First, a defensive
+  clamp that silences the symptom (`max(10, ...)`) can walk straight into the adjacent
+  failure; the guard was written to prevent "max below min" and produced "max equals min".
+  Second, `st.stop()` looks like `return` and is not — in a tabbed layout it's closer to
+  `sys.exit()`, and reaching for it would have converted a one-tab bug into a whole-app
+  bug. Both were caught by executing the app headless over its real edge cases rather than
+  by clicking the happy path.

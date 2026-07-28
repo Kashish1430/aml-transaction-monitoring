@@ -31,7 +31,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - All paths, seeds, window sizes, and thresholds live in `config.yaml` — no hardcoded magic numbers scattered in scripts.
 - Everything seeded and deterministic.
 - `data/`, `models/` are gitignored (large/binary/regenerable). The only bundled data artifact committed to the repo is the small precomputed `app/data/demo_alerts.parquet` used by the live demo (target <20MB — see Phase 8 in `PLAN.md`).
-- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 123 tests as of Phase 8.
+- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 147 tests as of Phase 9.
 - Commit per phase (see `PLAN.md`) with a clear message describing what became runnable.
 
 ## Environment
@@ -81,7 +81,7 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-8 are done (Phases 0-7 merged to `main` via PRs #6, #7, #8; Phase 8 on `phase-8-demo-artifact` — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+Phases 0-9 are done (Phases 0-8 merged to `main` via PRs #6, #7, #8, #10; Phase 9 on `phase-9-streamlit-app` — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
 
 Phase 8 built `scripts/build_demo_artifact.py`, which writes the only two data files the deployed app reads: `app/data/demo_alerts.parquet` (15.3 MB, 30,000 rows x 126 cols) and `app/data/demo_metrics.json` (36 KB). Three things from it constrain Phase 9:
 
@@ -103,4 +103,11 @@ Phase 6 added `src/explain.py` (SHAP + per-alert reason codes); two things from 
 - **Never read `shap.TreeExplainer.expected_value`** — on shap 0.45.1 + xgboost 2.0.3 it returns `logit(base_score)` until the first `shap_values()` call, then is silently replaced with a different, correct value. Use `explain.shap_base_value`, which derives the intercept and asserts additivity. Don't "simplify" it back.
 - **Reason codes come in two variants** (`build_reason_code`'s `exclude_features`): faithful to raw SHAP, and behavioural with `PAYMENT_FORMAT_FEATURES` excluded from the *sentence only*. This exists because `payment_format_ACH` leads the faithful code on 99.86% of the alert queue, making it useless for triage. Phase 8's demo artifact should carry both; don't silently drop one.
 
-Next step is Phase 9 (`app/streamlit_app.py` — currently a docstring stub) in `PLAN.md`, on a new feature branch per the Git workflow above.
+Phase 9 built the app itself, as **two** modules rather than the one `PLAN.md` originally sketched:
+
+- **`app/artifact.py` holds all the logic; `app/streamlit_app.py` is layout only.** A Streamlit script executes top-to-bottom on import, so logic living in the entrypoint can't be imported by a test without starting the UI. Keep new data-shaping code in `artifact.py`, where `tests/test_app_artifact.py` can reach it.
+- **Never let the app import `src/`.** `app/requirements.txt` is streamlit/pandas/pyarrow/plotly/numpy only — no shap, xgboost or scikit-learn, none of which exist on Streamlit Cloud and none of which the app needs.
+- **The `sys.path.insert` at the top of `streamlit_app.py` is load-bearing, not clutter.** `streamlit run app/streamlit_app.py` puts `app/` on the path, *not* the repo root, so `from app import artifact` raises `ModuleNotFoundError` on the real server. Both pytest (`pythonpath = ["."]`) and `AppTest` hide this by running with the repo root already present — the test suite structurally cannot catch it. Verify path-dependent changes by emulating the deployment path, not by running the suite.
+- **`tests/test_app_smoke.py` runs the real app headless** through `streamlit.testing.v1.AppTest`, which is what makes PLAN.md's "click through all four tabs" check enforceable in CI. When adding a widget with a `format_func`, note that `AppTest` reports `.options` already formatted but `set_value` takes the *raw* value — passing `options[i]` double-formats and raises inside AppTest, not the app.
+
+Next step is Phase 10 (deploy to Streamlit Community Cloud, get the public URL) in `PLAN.md`, on a new feature branch per the Git workflow above. Phase 10 is largely a hosting-console task rather than a code one; the repo side is already done.
