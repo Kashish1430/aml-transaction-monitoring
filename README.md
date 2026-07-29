@@ -8,6 +8,12 @@
 
 **▶ [Open the live dashboard](https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/)**
 
+[![The alert queue](reports/figures/11_app_alert_queue.png)](https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/)
+
+<sub>The analyst's ranked worklist: 10,011 alerts from a 1,015,669-transaction held-out
+period, filterable by typology, payment format, date and account, each row carrying a
+plain-English reason for the flag.</sub>
+
 An alert-triage system for anti-money-laundering transaction monitoring, built on IBM's
 public AML benchmark dataset. It is **not** "a classifier that detects money laundering" —
 it re-ranks and filters the alerts a naive rules engine would raise, so an analyst reviews
@@ -156,6 +162,13 @@ SHAP leads with "the payment was made via ACH" on **99.86%** of the queue — pe
 truthful and useless for triage. A **behavioural** variant excludes payment format from the
 *sentence only*, never from the model, and spreads across 11 distinct leading features. The
 gap between them is reported, not smoothed over.
+
+![Alert detail: reason codes and the SHAP waterfall](reports/figures/11_app_alert_detail.png)
+
+<sub>The drill-down on one alert. The behavioural reason code sits at the top; the faithful
+variant is expanded beneath it, showing the ACH-dominance problem in situ. The waterfall
+below is exact SHAP in log-odds space — bars sum from the model's baseline to the score the
+queue ranked by, verified in CI to a maximum error of 5.2e-07.</sub>
 
 ### Drift monitoring, and what it actually found
 
