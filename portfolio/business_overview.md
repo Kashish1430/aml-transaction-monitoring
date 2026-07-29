@@ -282,9 +282,31 @@ where clearing a filter crashed the queue view, and one where the app would have
 start at all once deployed, for a reason no amount of local testing would have revealed
 (the test setup happened to hide it). Both are documented.
 
-### Stage 10 onward — not built yet
-Publishing the dashboard to a public web address, and the final written summary. These will
-be added to this document as they're completed — see `PLAN.md` for the full build order.
+### Stage 10 — live, and open to anyone
+
+The dashboard is deployed and publicly reachable at **https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/** — no login, no install,
+nothing to run. It costs nothing to host, which was a constraint set at the start of the
+project rather than a happy accident.
+
+### Stage 11 — the written summary
+
+The project's front page now opens with the result and the live link, then explains the
+business problem, why the system is built as an overnight batch process rather than a
+real-time check, why network structure matters, why accuracy is the wrong measure here, and
+every caveat worth knowing — including that the data is synthetic and that one payment-type
+feature carries more of the result than is comfortable.
+
+One small thing worth mentioning, because it reflects how the whole project was built: the
+claim "every number in this document is traceable" is itself checked automatically. The
+headline figures in the front page are compared against the model's own output files every
+time the tests run, so if the pipeline is ever re-run and a number changes, the tests fail
+until the write-up is corrected. It caught its first error within minutes of being written —
+the page claimed 147 tests when there were 157.
+
+### What's optional from here
+Two extensions are planned but not built: a network view showing the web of accounts around
+an alert, and a demonstration that the system could score transactions as they arrive. Both
+are described in `PLAN.md`. Neither is needed for the project to stand on its own.
 
 ## An honest caveat
 
@@ -298,8 +320,8 @@ a demonstration of approach, not a claim about performance on real-world data.
 
 ## Current status
 
-Phases 0-9 of 11 are complete (data validation, rules baseline, feature engineering,
-first trained model, the headline evaluation result above, a plain-English justification
-attached to every alert, the early-warning drift layer described in Stage 7, the prepared
-demo extract of Stage 8, and the working dashboard of Stage 9). Next: publishing it to a
-public web address (Phase 10) and the final write-up (Phase 11).
+**Complete.** All 11 phases are done and the dashboard is live at
+https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/ — data validation, rules baseline, feature engineering, a trained model, the headline
+result above, a plain-English justification on every alert, drift monitoring, the prepared
+demo extract, the dashboard, deployment, and the written summary. Two optional extensions
+(a network view, and live transaction scoring) are planned but not built.

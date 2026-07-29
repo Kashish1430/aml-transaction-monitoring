@@ -40,7 +40,16 @@ Starting state (2026-07-19, historical): empty directory except the brief and a 
   - **Deviation from this doc's repo layout: the app is two modules, not one.** A Streamlit script executes top-to-bottom on import, so anything living in `streamlit_app.py` cannot be imported by a test without starting the UI. All filtering/waterfall/loading logic moved to `app/artifact.py`, which is unit-tested directly; `streamlit_app.py` is layout and charts only. `app/requirements.txt` also now declares `numpy` explicitly (imported directly by `artifact.py`, previously relied on as a pandas transitive).
   - **PLAN.md's Phase 9 check is executed, not remembered.** `tests/test_app_smoke.py` runs the real script headless through `streamlit.testing.v1.AppTest` and asserts on rendered elements, so "click through all four tabs, no exceptions" is enforced in CI. It found two defects that would otherwise have reached the public URL: `st.slider` raising whenever a filter narrowed the view to ≤10 rows, and `from app import artifact` failing under the real `streamlit run` import path.
   - **The `sys.path` fix at the top of `streamlit_app.py` is load-bearing for Phase 10** — `streamlit run app/streamlit_app.py` puts `app/` on the path, not the repo root, and both pytest and AppTest hide this by running with the repo root already there. Don't "tidy" that insert away.
-- **Phase 10 onward — NOT STARTED.** Next up: connect the repo to Streamlit Community Cloud and get the public URL.
+- **Phase 10 — DONE.** Deployed to Streamlit Community Cloud from `main`, entrypoint `app/streamlit_app.py`. **Live URL: https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/** Verified publicly reachable from an unauthenticated client (HTTP 200 after Streamlit's anonymous-session redirect chain, ~1.7s) and in a browser incognito session. One diagnostic trap worth recording: a cookie-less `curl` gets a 303 to `/-/auth/app` on a *public* app, because that redirect is Streamlit Cloud's normal anonymous-session bootstrap, not an access denial — checking with a cookie jar is the only way to tell "private app" from "session handshake".
+- **Phase 11 — DONE.** README rewritten from the scaffolding placeholder: headline result and live link above the fold, business problem folding in the batch-vs-real-time architecture reasoning, why network features matter, why accuracy is not reported, reason codes, drift monitoring, honest caveats, reproduce-locally instructions, an ASCII architecture diagram, CI/Python/licence badges, and a repository guide. **157 tests** (147 → 157). PLAN.md's own Phase 11 check ("every numeric claim traces to results.md") is executable rather than a promise: `tests/test_readme_numbers.py` asserts the README's headline, operating point, AUCs, precision@k, per-typology recalls, split sizes and the claimed typology *range* against `app/data/demo_metrics.json`, and fails if a pipeline rebuild moves a number without the README following. It also enforces the CLAUDE.md constraint that no accuracy figure is ever reported as a result. It caught its own first drift immediately — the README claimed 147 tests when there were 157.
+- **Phase 12 — network analytics [PLANNED, not started].** Decided 2026-07-29 with the project owner, after Phase 10 shipped. Extends the existing account graph rather than replacing it, and needs **no new dependencies** (networkx 3.3 already provides `louvain_communities`, personalised `pagerank`, `ego_graph`):
+  - Ego-network extraction (1-2 hops) around an alerted account; community detection (Louvain) to surface rings; personalised PageRank seeded on known-laundering accounts as a network risk score.
+  - An **Entity Network** tab in the app, drawing the neighbourhood of a selected alert with laundering accounts highlighted. Precomputed per top-N alert into the demo artifact — the app still computes nothing.
+  - Scope guard: this is *visualisation and scoring on top of the existing transaction-level graph*. It must not drift into Project 2's territory (mule-ring detection as the core problem, PU learning, synthetic device/KYC layers) — see Future work below.
+- **Phase 13 — streaming / online feature parity [PLANNED, not started].** Same decision. Deliberately **not** a hosted service: Streamlit Community Cloud cannot run a background consumer, and no managed streaming vendor has a free tier that survives the $0 always-on constraint. The valuable part was never the infrastructure — it is proving the absence of train/serve skew:
+  - `src/streaming.py` with a `TransactionScorer` holding live state (deque-based rolling-window aggregates per account, incrementally maintained account graph), replaying HI-Small in timestamp order.
+  - **The load-bearing test:** online features for a sample of transactions must be bit-identical to the batch features in `features.parquet` for the same rows. That parity assertion is the deliverable; the streaming loop is scaffolding around it.
+  - Report throughput (txn/sec) and per-transaction latency. Optional local-only `docker-compose.yml` with Kafka + consumer, screenshotted for the README and labelled honestly as a local demo, never deployed.
 - **Process addition not in the original plan:** GitHub branch protection was added to `main` after Phase 2 (2026-07-20) — PR + passing CI required for every change from here on, including admins. Exact rules and the working loop are documented in `CLAUDE.md`'s Git workflow section; follow that for Phase 3 onward.
 
 ## Key design decisions
@@ -182,17 +191,17 @@ Each phase ends with something runnable/checkable — no phase depends on trusti
 - Slim `app/requirements.txt` (streamlit, pandas, pyarrow, plotly/matplotlib; drop shap since values are precomputed). Done — streamlit/pandas/pyarrow/plotly/numpy, pinned to the same versions as the root `requirements.txt` so what runs locally is what deploys. No shap, xgboost or scikit-learn.
 - **Check:** `streamlit run app/streamlit_app.py` locally, click through all four tabs, no exceptions, fast load. Done, and automated: `tests/test_app_smoke.py` executes the app headless via `streamlit.testing.v1.AppTest` and asserts across all four tabs plus the empty/near-empty filter edge cases. The server was also started for real (`--server.headless`) and confirmed serving. Load is ~2.7s cold for a 15.3MB artifact.
 
-**Phase 10 — Deploy**
-- Push repo to GitHub (public).
-- Connect Streamlit Community Cloud to the repo, entrypoint `app/streamlit_app.py`, deps from `app/requirements.txt`.
-- Deploy, get the public `*.streamlit.app` URL.
-- **Check:** open the live URL from a fresh/incognito session, click through every tab, confirm it matches local behavior. Add the link + a screenshot/GIF to the README.
+**Phase 10 — Deploy [DONE]**
+- Push repo to GitHub (public). Done.
+- Connect Streamlit Community Cloud to the repo, entrypoint `app/streamlit_app.py`, deps from `app/requirements.txt`. Done.
+- Deploy, get the public `*.streamlit.app` URL. Done: **https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/**
+- **Check:** open the live URL from a fresh/incognito session, click through every tab, confirm it matches local behavior. Add the link + a screenshot/GIF to the README. Done for the incognito check and the link; a screenshot/GIF is still outstanding and is the one piece of Phase 10 not delivered. Before deploying, a fresh `git clone --depth 1` of the branch was run through `AppTest` to confirm the app boots from exactly what Streamlit Cloud receives (0 exceptions, 4 tabs, correct headline).
 
-**Phase 11 — README & portfolio polish**
+**Phase 11 — README & portfolio polish [DONE]**
 - README opens with the false-positive-reduction framing and headline result, then: live demo link (prominent, near the top), business problem, why network features matter, evaluation-choice rationale (why not accuracy), SHAP reason codes, drift monitoring, how to reproduce locally, simple architecture diagram, honest caveats (synthetic data, demo app uses a precomputed sample not live inference).
 - Business problem section should fold in the batch-vs-real-time architecture reasoning already written up in `reports/challenges.md`'s "Architecture — why this is a batch pipeline, not a real-time scoring service" entry: sanctions screening is real-time/blocking (a lookup problem), AML typology detection is batch/periodic by nature (patterns only visible across a rolling window of history, matching the 30-60 day SAR filing timeline) — this is *why* the whole system is architected as offline batch scoring feeding an analyst queue, not a simplification being apologized for.
 - MIT license, clean commit history, CI badge in README.
-- **Check:** read the README fresh, top to bottom; every numeric claim traces to `results.md` or the notebooks.
+- **Check:** read the README fresh, top to bottom; every numeric claim traces to `results.md` or the notebooks. Done, and converted from a reading exercise into `tests/test_readme_numbers.py`, which asserts the load-bearing figures against `app/data/demo_metrics.json` so the README cannot silently go stale when the pipeline is rerun.
 
 **Phase 12 (optional stretch, only after core is solid)**
 - Isolation Forest agreement/disagreement analysis if not already done in Phase 4.
@@ -207,7 +216,7 @@ Each phase ends with something runnable/checkable — no phase depends on trusti
 
 ## Suggested order of work across sessions
 
-Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11, each phase committed separately with a clear commit message, so progress is visible and any phase can be resumed independently in a future session.
+Phase 0 → 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 (all done), then the optional Phase 12 (network analytics) and Phase 13 (streaming parity) described in Progress above. Each phase committed separately with a clear commit message, so progress is visible and any phase can be resumed independently in a future session.
 
 ## Future work: Project 2 (separate repo, after this project ships)
 

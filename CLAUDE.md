@@ -31,7 +31,7 @@ This is a CV/portfolio project aimed at banks and financial institutions, so cor
 - All paths, seeds, window sizes, and thresholds live in `config.yaml` — no hardcoded magic numbers scattered in scripts.
 - Everything seeded and deterministic.
 - `data/`, `models/` are gitignored (large/binary/regenerable). The only bundled data artifact committed to the repo is the small precomputed `app/data/demo_alerts.parquet` used by the live demo (target <20MB — see Phase 8 in `PLAN.md`).
-- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 147 tests as of Phase 9.
+- Tests live in `tests/`, run via `pytest`, and CI (`.github/workflows/ci.yml`) runs ruff + pytest on pushes to `main` and on every pull request. 157 tests as of Phase 11.
 - Commit per phase (see `PLAN.md`) with a clear message describing what became runnable.
 
 ## Environment
@@ -81,7 +81,7 @@ Practical loop for every phase (this is how Phases 2+ were actually done, follow
 
 ## Current status
 
-Phases 0-9 are done (Phases 0-8 merged to `main` via PRs #6, #7, #8, #10; Phase 9 on `phase-9-streamlit-app` — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
+**The project is complete and deployed: https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/** Phases 0-11 are done (Phases 0-9 merged to `main` via PRs #6, #7, #8, #10, #11; Phase 11 on `phase-11-readme` — see `PLAN.md`'s Progress section for the authoritative per-phase checklist and what each phase actually produced, including deviations from the original plan). The project's headline result exists: **at equal recall (68.8%), the model raises 96.6% fewer alerts than the rules baseline on the test split** — see `reports/results.md`'s Phase 5 section. Phase 7 re-derived it excluding the dataset's anomalous tail (96.2%), so it's now known not to depend on that tail.
 
 Phase 8 built `scripts/build_demo_artifact.py`, which writes the only two data files the deployed app reads: `app/data/demo_alerts.parquet` (15.3 MB, 30,000 rows x 126 cols) and `app/data/demo_metrics.json` (36 KB). Three things from it constrain Phase 9:
 
@@ -110,4 +110,10 @@ Phase 9 built the app itself, as **two** modules rather than the one `PLAN.md` o
 - **The `sys.path.insert` at the top of `streamlit_app.py` is load-bearing, not clutter.** `streamlit run app/streamlit_app.py` puts `app/` on the path, *not* the repo root, so `from app import artifact` raises `ModuleNotFoundError` on the real server. Both pytest (`pythonpath = ["."]`) and `AppTest` hide this by running with the repo root already present — the test suite structurally cannot catch it. Verify path-dependent changes by emulating the deployment path, not by running the suite.
 - **`tests/test_app_smoke.py` runs the real app headless** through `streamlit.testing.v1.AppTest`, which is what makes PLAN.md's "click through all four tabs" check enforceable in CI. When adding a widget with a `format_func`, note that `AppTest` reports `.options` already formatted but `set_value` takes the *raw* value — passing `options[i]` double-formats and raises inside AppTest, not the app.
 
-Next step is Phase 10 (deploy to Streamlit Community Cloud, get the public URL) in `PLAN.md`, on a new feature branch per the Git workflow above. Phase 10 is largely a hosting-console task rather than a code one; the repo side is already done.
+Phases 10-11 shipped the deployment and the README. Three things from them matter for future sessions:
+
+- **The README's numbers are enforced by `tests/test_readme_numbers.py`,** which asserts them against `app/data/demo_metrics.json`. If you rerun the pipeline and a number moves, that test fails until the README is updated — update the README, don't relax the test. It also forbids ever reporting an accuracy figure as a result (CLAUDE.md's own constraint, made executable).
+- **A cookie-less `curl` gets a 303 to `/-/auth/app` on a public Streamlit Cloud app.** That redirect is the anonymous-session bootstrap, *not* an access denial. Diagnosing "is the deployed app public?" requires `curl -L` with a cookie jar (`-c`/`-b`); without one you will wrongly conclude the app is private. This was gotten wrong once already.
+- **The live URL appears in README.md, PLAN.md and CLAUDE.md.** If the app is ever redeployed under a different subdomain, all three need updating, and `test_live_demo_link_is_present_and_near_the_top` will keep passing regardless since it only checks the shape — so it will not catch a stale URL for you.
+
+The remaining work is optional and was agreed with the project owner on 2026-07-29, in this order: **Phase 12 (network analytics)** then **Phase 13 (streaming / online feature parity)** — both specified in `PLAN.md`'s Progress section. Neither is started. Phase 12 needs no new dependencies; Phase 13 is deliberately not a hosted service. Also still outstanding from Phase 10: a screenshot/GIF of the live app in the README.
