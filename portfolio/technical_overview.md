@@ -465,6 +465,31 @@ remembering. It found two defects, both of which would have reached the public U
   it. The generalisable point is that for environment-dependent behaviour, a passing test in
   the wrong environment is evidence about the wrong thing.
 
+### Phases 10-11 — Deployment and README
+
+**Live: https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/** Deployed from `main` on Streamlit Community Cloud, entrypoint
+`app/streamlit_app.py`, dependencies from the slim `app/requirements.txt`. Before deploying,
+a fresh `git clone --depth 1` was run through `AppTest` to confirm the app boots from
+exactly the file set Streamlit Cloud receives — 0 exceptions, 4 tabs, correct headline.
+
+One diagnostic trap worth recording: a cookie-less `curl` against a *public* Streamlit Cloud
+app returns `303` to `/-/auth/app`, which looks exactly like an access denial and is not —
+it is the anonymous-session bootstrap. Distinguishing "private app" from "session handshake"
+requires `curl -L` with a cookie jar; without one, the correct conclusion is unreachable.
+
+**The README's numbers are enforced, not asserted.** PLAN.md's Phase 11 check was "read the
+README fresh; every numeric claim traces to results.md" — a check that passes right up until
+the pipeline is rerun and the most-read file in the repo quietly goes stale.
+`tests/test_readme_numbers.py` compares the headline, matched recall, alert counts, AUCs,
+precision@k, all eight per-typology recalls, the claimed typology *range* (asserting the
+quoted bounds really are the min and max), split sizes, `scale_pos_weight` and feature count
+against `app/data/demo_metrics.json`. It also enforces the project's own constraint that no
+accuracy figure is ever reported as a result, allowing only the illustration that a
+do-nothing model scores 99.82%. Prose claims spanning hard-wrapped lines are matched against
+a whitespace-normalised view, so reflowing a paragraph is not a test failure. Suite: 147 →
+**157**. It caught its first drift immediately — the README claimed 147 tests when there
+were 157.
+
 ## Tech stack
 
 Python 3.12 · pandas / numpy · scikit-learn · xgboost / lightgbm · networkx · shap ·
@@ -473,11 +498,15 @@ No GPU required anywhere in this project.
 
 ## Current status
 
-Phases 0-9 of 11 complete — see `PLAN.md`'s Progress section for the authoritative
-per-phase state. The project's headline result exists, every alert carries a grounded,
-plain-English reason code, the result is known to survive removing the dataset's anomalous
-tail (96.2% vs. 96.6%), both artifacts the app reads are built and committed (15.3 MB
-parquet + 36 KB metrics JSON), and the four-tab dashboard runs against them. 147 tests,
-including integrity checks against the committed artifact and headless end-to-end runs of
-the app itself. Next: deployment to Streamlit Community Cloud (Phase 10) and the README
-(Phase 11).
+**Complete — all 11 phases done, deployed at https://aml-transaction-monitoring-839p8dzdafalfnkbpgwrpp.streamlit.app/.** See `PLAN.md`'s Progress section for
+the authoritative per-phase state. The headline result holds (96.6%, or 96.2% excluding the
+dataset's anomalous tail), every alert carries a grounded plain-English reason code, both
+artifacts the app reads are built and committed (15.3 MB parquet + 36 KB metrics JSON), and
+the four-tab dashboard is live. **157 tests**, including integrity checks against the
+committed artifact, headless end-to-end runs of the app, and assertions that the README's
+numbers still match the pipeline's output.
+
+Two optional extensions are specified in `PLAN.md` but not started: **Phase 12** (network
+analytics — ego networks, Louvain communities, personalised PageRank, an Entity Network tab;
+no new dependencies) and **Phase 13** (streaming, built around an online/offline feature
+parity proof rather than hosted infrastructure).
